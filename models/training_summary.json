@@ -1,0 +1,258 @@
+{
+  "trained_at": "2026-07-13T05:08:51.198911Z",
+  "source_data": "C:\\Users\\24042626\\Downloads\\DFT Y3 (1)\\C300 FYP\\New Code\\uploads\\1783919316330_set A corporate_rating.csv",
+  "target_column": null,
+  "dataset_summary": {
+    "rows_before_cleaning": 2029,
+    "missing_values": {
+      "Rating": 0,
+      "Name": 0,
+      "Symbol": 0,
+      "Rating Agency Name": 0,
+      "Date": 0,
+      "Sector": 0,
+      "currentRatio": 0,
+      "quickRatio": 0,
+      "cashRatio": 0,
+      "daysOfSalesOutstanding": 0,
+      "netProfitMargin": 0,
+      "pretaxProfitMargin": 0,
+      "grossProfitMargin": 0,
+      "operatingProfitMargin": 0,
+      "returnOnAssets": 0,
+      "returnOnCapitalEmployed": 0,
+      "returnOnEquity": 0,
+      "assetTurnover": 0,
+      "fixedAssetTurnover": 0,
+      "debtEquityRatio": 0,
+      "debtRatio": 0,
+      "effectiveTaxRate": 0,
+      "freeCashFlowOperatingCashFlowRatio": 0,
+      "freeCashFlowPerShare": 0,
+      "cashPerShare": 0,
+      "companyEquityMultiplier": 0,
+      "ebitPerRevenue": 0,
+      "enterpriseValueMultiple": 0,
+      "operatingCashFlowPerShare": 0,
+      "operatingCashFlowSalesRatio": 0,
+      "payablesTurnover": 0
+    },
+    "duplicate_rows": 0,
+    "rows_after_target_mapping": 2029,
+    "identifier_columns_removed": [
+      "Name",
+      "Symbol",
+      "Date",
+      "Rating Agency Name",
+      "Rating"
+    ],
+    "numeric_feature_columns": [
+      "currentRatio",
+      "quickRatio",
+      "cashRatio",
+      "daysOfSalesOutstanding",
+      "netProfitMargin",
+      "pretaxProfitMargin",
+      "grossProfitMargin",
+      "operatingProfitMargin",
+      "returnOnAssets",
+      "returnOnCapitalEmployed",
+      "returnOnEquity",
+      "assetTurnover",
+      "fixedAssetTurnover",
+      "debtEquityRatio",
+      "debtRatio",
+      "effectiveTaxRate",
+      "freeCashFlowOperatingCashFlowRatio",
+      "freeCashFlowPerShare",
+      "cashPerShare",
+      "companyEquityMultiplier",
+      "ebitPerRevenue",
+      "enterpriseValueMultiple",
+      "operatingCashFlowPerShare",
+      "operatingCashFlowSalesRatio",
+      "payablesTurnover"
+    ],
+    "categorical_feature_columns": [
+      "Sector"
+    ],
+    "feature_columns": [
+      "Sector",
+      "currentRatio",
+      "quickRatio",
+      "cashRatio",
+      "daysOfSalesOutstanding",
+      "netProfitMargin",
+      "pretaxProfitMargin",
+      "grossProfitMargin",
+      "operatingProfitMargin",
+      "returnOnAssets",
+      "returnOnCapitalEmployed",
+      "returnOnEquity",
+      "assetTurnover",
+      "fixedAssetTurnover",
+      "debtEquityRatio",
+      "debtRatio",
+      "effectiveTaxRate",
+      "freeCashFlowOperatingCashFlowRatio",
+      "freeCashFlowPerShare",
+      "cashPerShare",
+      "companyEquityMultiplier",
+      "ebitPerRevenue",
+      "enterpriseValueMultiple",
+      "operatingCashFlowPerShare",
+      "operatingCashFlowSalesRatio",
+      "payablesTurnover"
+    ]
+  },
+  "models": [
+    {
+      "model_name": "decision_tree",
+      "model_display_name": "Decision Tree",
+      "model_path": "models\\decision_tree.joblib",
+      "metrics": {
+        "accuracy": 0.5500821018062397,
+        "weighted_f1": 0.5497741573021249,
+        "macro_f1": 0.4964052805923087
+      },
+      "confusion_matrix": [
+        [
+          86,
+          34,
+          27,
+          1
+        ],
+        [
+          52,
+          97,
+          52,
+          0
+        ],
+        [
+          27,
+          53,
+          145,
+          13
+        ],
+        [
+          3,
+          4,
+          8,
+          7
+        ]
+      ],
+      "classification_report_text": "                 precision    recall  f1-score   support\n\nInvestment-High       0.51      0.58      0.54       148\n Investment-Low       0.52      0.48      0.50       201\n    Speculative       0.62      0.61      0.62       238\n     Distressed       0.33      0.32      0.33        22\n\n       accuracy                           0.55       609\n      macro avg       0.50      0.50      0.50       609\n   weighted avg       0.55      0.55      0.55       609\n"
+    },
+    {
+      "model_name": "random_forest",
+      "model_display_name": "Random Forest",
+      "model_path": "models\\random_forest.joblib",
+      "metrics": {
+        "accuracy": 0.6830870279146142,
+        "weighted_f1": 0.670541780389565,
+        "macro_f1": 0.5522458460327687
+      },
+      "confusion_matrix": [
+        [
+          99,
+          37,
+          12,
+          0
+        ],
+        [
+          38,
+          116,
+          47,
+          0
+        ],
+        [
+          19,
+          20,
+          199,
+          0
+        ],
+        [
+          1,
+          0,
+          19,
+          2
+        ]
+      ],
+      "classification_report_text": "                 precision    recall  f1-score   support\n\nInvestment-High       0.63      0.67      0.65       148\n Investment-Low       0.67      0.58      0.62       201\n    Speculative       0.72      0.84      0.77       238\n     Distressed       1.00      0.09      0.17        22\n\n       accuracy                           0.68       609\n      macro avg       0.75      0.54      0.55       609\n   weighted avg       0.69      0.68      0.67       609\n"
+    },
+    {
+      "model_name": "logistic_regression",
+      "model_display_name": "Logistic Regression",
+      "model_path": "models\\logistic_regression.joblib",
+      "metrics": {
+        "accuracy": 0.3727422003284072,
+        "weighted_f1": 0.24216557305543718,
+        "macro_f1": 0.16038569956260085
+      },
+      "confusion_matrix": [
+        [
+          2,
+          6,
+          140,
+          0
+        ],
+        [
+          2,
+          9,
+          190,
+          0
+        ],
+        [
+          2,
+          13,
+          216,
+          7
+        ],
+        [
+          0,
+          3,
+          19,
+          0
+        ]
+      ],
+      "classification_report_text": "                 precision    recall  f1-score   support\n\nInvestment-High       0.33      0.01      0.03       148\n Investment-Low       0.29      0.04      0.08       201\n    Speculative       0.38      0.91      0.54       238\n     Distressed       0.00      0.00      0.00        22\n\n       accuracy                           0.37       609\n      macro avg       0.25      0.24      0.16       609\n   weighted avg       0.33      0.37      0.24       609\n"
+    },
+    {
+      "model_name": "xgboost",
+      "model_display_name": "XGBoost",
+      "model_path": "models\\xgboost.joblib",
+      "metrics": {
+        "accuracy": 0.6814449917898193,
+        "weighted_f1": 0.6709120875339375,
+        "macro_f1": 0.5669381257042874
+      },
+      "confusion_matrix": [
+        [
+          97,
+          35,
+          16,
+          0
+        ],
+        [
+          32,
+          117,
+          52,
+          0
+        ],
+        [
+          11,
+          27,
+          198,
+          2
+        ],
+        [
+          1,
+          1,
+          17,
+          3
+        ]
+      ],
+      "classification_report_text": "                 precision    recall  f1-score   support\n\nInvestment-High       0.69      0.66      0.67       148\n Investment-Low       0.65      0.58      0.61       201\n    Speculative       0.70      0.83      0.76       238\n     Distressed       0.60      0.14      0.22        22\n\n       accuracy                           0.68       609\n      macro avg       0.66      0.55      0.57       609\n   weighted avg       0.68      0.68      0.67       609\n"
+    }
+  ]
+}

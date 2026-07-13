@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CreditSight</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="background-glow glow-one"></div>
+  <div class="background-glow glow-two"></div>
+
+  <main class="shell">
+    <section class="hero card">
+      <div>
+        <p class="eyebrow">Credit Risk Analysis Platform</p>
+        <h1>CreditSight</h1>
+        <p class="hero-copy">
+          Upload a company dataset, choose a baseline model, and review risk predictions with clear metrics.
+        </p>
+      </div>
+      <div class="hero-badge">
+        <span>Bright</span>
+        <span>Professional</span>
+        <span>Fast</span>
+      </div>
+    </section>
+
+    <section class="grid">
+      <div class="card panel">
+        <h2>Run Analysis</h2>
+        <form id="analysisForm">
+          <label>
+            Dataset upload
+            <input id="dataset" name="dataset" type="file" accept=".csv,.xlsx,.xls" required />
+          </label>
+
+          <label>
+            Model selection
+            <select id="model" name="model" required>
+              <option value="decision_tree">Decision Tree</option>
+              <option value="random_forest">Random Forest</option>
+              <option value="logistic_regression">Logistic Regression</option>
+              <option value="xgboost">XGBoost</option>
+            </select>
+          </label>
+
+          <button type="submit" class="primary-button">Run Analysis</button>
+        </form>
+
+        <div id="statusBox" class="status hidden"></div>
+      </div>
+
+      <div class="card panel">
+        <h2>Results</h2>
+        <div class="result-summary">
+          <div><span>Selected model</span><strong id="selectedModel">-</strong></div>
+          <div><span>Accuracy</span><strong id="accuracy">-</strong></div>
+          <div><span>Weighted F1</span><strong id="weightedF1">-</strong></div>
+          <div><span>Macro F1</span><strong id="macroF1">-</strong></div>
+        </div>
+
+        <div class="download-row">
+          <a id="downloadLink" class="secondary-button disabled" href="#" download>Download CSV</a>
+        </div>
+      </div>
+    </section>
+
+    <section class="card panel">
+      <h2>Confusion Matrix</h2>
+      <div id="confusionMatrix" class="matrix-wrap empty-state">Run an analysis to see the matrix.</div>
+    </section>
+
+    <section class="card panel">
+      <h2>Classification Report</h2>
+      <pre id="classificationReport" class="report-box empty-state">Run an analysis to see the report.</pre>
+    </section>
+
+    <section class="card panel">
+      <h2>Predicted RatingGroup For Each Row</h2>
+      <div class="table-wrap">
+        <table id="predictionTable">
+          <thead>
+            <tr>
+              <th>Row</th>
+              <th>Predicted RatingGroup</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td colspan="2" class="empty-state">Run an analysis to see row-level predictions.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>
