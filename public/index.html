@@ -55,10 +55,11 @@
         <h2>Results</h2>
         <div class="result-summary">
           <div><span>Selected model</span><strong id="selectedModel">-</strong></div>
-          <div><span>Accuracy</span><strong id="accuracy">-</strong></div>
-          <div><span>Weighted F1</span><strong id="weightedF1">-</strong></div>
-          <div><span>Macro F1</span><strong id="macroF1">-</strong></div>
+          <div><span>Baseline Test Accuracy</span><strong id="accuracy">-</strong></div>
+          <div><span>Baseline Test Weighted F1</span><strong id="weightedF1">-</strong></div>
+          <div><span>Baseline Test Macro F1</span><strong id="macroF1">-</strong></div>
         </div>
+        <p id="metricsNote" class="metrics-note">These metrics come from Dataset A's held-out test set, not the uploaded company file.</p>
 
         <div class="download-row">
           <a id="downloadLink" class="secondary-button disabled" href="#" download>Download CSV</a>
@@ -84,15 +85,22 @@
             <tr>
               <th>Row</th>
               <th>Predicted RatingGroup</th>
+              <th>Confidence Score</th>
             </tr>
           </thead>
           <tbody>
             <tr>
-              <td colspan="2" class="empty-state">Run an analysis to see row-level predictions.</td>
+              <td colspan="3" class="empty-state">Run an analysis to see row-level predictions.</td>
             </tr>
           </tbody>
         </table>
       </div>
+    </section>
+
+    <section class="card panel disclaimer-card">
+      <p class="disclaimer-text">
+        This prediction supports credit risk assessment and should not replace professional financial judgement or formal credit approval.
+      </p>
     </section>
   </main>
 

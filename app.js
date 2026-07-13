@@ -12,9 +12,9 @@ const UPLOAD_DIR = path.join(ROOT_DIR, "uploads");
 const OUTPUT_DIR = path.join(ROOT_DIR, "outputs");
 const MODELS_DIR = path.join(ROOT_DIR, "models");
 const PYTHON_BIN = process.env.PYTHON_BIN || "python";
-const TRAIN_SCRIPT = path.join(ROOT_DIR, "python", "train_models.py");
 const PREDICT_SCRIPT = path.join(ROOT_DIR, "python", "predict.py");
 const MODEL_KEYS = ["decision_tree", "random_forest", "logistic_regression", "xgboost"];
+const MAX_UPLOAD_SIZE_BYTES = 10 * 1024 * 1024;
 
 // Make sure the folders we write to always exist.
 for (const dir of [UPLOAD_DIR, OUTPUT_DIR, MODELS_DIR]) {
@@ -29,7 +29,35 @@ const storage = multer.diskStorage({
   }
 });
 
-const upload = multer({ storage });
+const upload = multer({
+  storage,
+  limits: {
+    fileSize: MAX_UPLOAD_SIZE_BYTES
+  },
+  fileFilter: (_req, file, callback) => {
+    const allowedExtensions = [".csv", ".xlsx", ".xls"];
+    const extension = path.extname(file.originalname || "").toLowerCase();
+    const normalizedName = String(file.originalname || "").toLowerCase();
+    const allowedByName = allowedExtensions.some((allowed) => normalizedName.endsWith(allowed));
+    const allowedByMime = [
+      "text/csv",
+      "application/csv",
+      "application/vnd.ms-excel",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "text/plain"
+    ].includes(file.mimetype);
+
+    if (!allowedByName && !allowedByMime) {
+      return callback(new multer.MulterError("LIMIT_UNEXPECTED_FILE", "dataset"));
+    }
+
+    if (!allowedExtensions.includes(extension)) {
+      return callback(new Error("Unsupported file type. Please upload a CSV or Excel file."));
+    }
+
+    return callback(null, true);
+  }
+});
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -84,99 +112,103 @@ function runPredictionScript(modelName, inputPath) {
   }
 }
 
-function modelArtifactsExist() {
-  return MODEL_KEYS.every((modelKey) => fs.existsSync(path.join(MODELS_DIR, `${modelKey}.joblib`)));
-}
-
-function runTrainingScript(inputPath) {
-  const pythonResult = spawnSync(
-    PYTHON_BIN,
-    [TRAIN_SCRIPT, "--data", inputPath],
-    { encoding: "utf-8" }
-  );
-
-  if (pythonResult.error) {
-    return {
-      ok: false,
-      error: pythonResult.error.message
-    };
-  }
-
-  if (pythonResult.status !== 0) {
-    let parsedError = null;
-    try {
-      parsedError = JSON.parse((pythonResult.stderr || pythonResult.stdout || "").trim());
-    } catch (_err) {
-      parsedError = {
-        error: (pythonResult.stderr || pythonResult.stdout || "Training script failed").trim()
-      };
-    }
-
-    return {
-      ok: false,
-      error: parsedError.error || "Training failed",
-      details: parsedError.details || null
-    };
+function removeUploadedFile(filePath) {
+  if (!filePath) {
+    return;
   }
 
   try {
-    return {
-      ok: true,
-      data: JSON.parse((pythonResult.stdout || "").trim())
-    };
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
   } catch (_err) {
-    return {
-      ok: false,
-      error: "Training script returned invalid JSON."
-    };
+    // Upload cleanup should not block the user response.
   }
+}
+
+function mapUploadError(error) {
+  if (!error) {
+    return "Upload failed.";
+  }
+
+  if (error instanceof multer.MulterError) {
+    if (error.code === "LIMIT_FILE_SIZE") {
+      return "File too large. Please upload a file smaller than 10 MB.";
+    }
+    if (error.code === "LIMIT_UNEXPECTED_FILE") {
+      return "Unsupported file type. Please upload a CSV or Excel file.";
+    }
+    return error.message;
+  }
+
+  return error.message || "Upload failed.";
 }
 
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true, name: "CreditSight" });
 });
 
-app.post("/api/analyze", upload.single("dataset"), (req, res) => {
+app.post("/api/analyze", (req, res) => {
   // This route receives the uploaded file and sends it to Python.
-  if (!req.file) {
-    return res.status(400).json({ error: "Please upload a dataset file before running the analysis." });
-  }
-
-  const modelName = String(req.body.model || "").trim();
-  if (!modelName) {
-    return res.status(400).json({ error: "Please choose one model from the dropdown menu." });
-  }
-
-  let trainingSummary = null;
-  if (!modelArtifactsExist()) {
-    const trainingResult = runTrainingScript(req.file.path);
-    if (!trainingResult.ok) {
-      return res.status(400).json({
-        error: trainingResult.error,
-        details: trainingResult.details || null
-      });
+  upload.single("dataset")(req, res, (uploadError) => {
+    if (uploadError) {
+      removeUploadedFile(req.file && req.file.path);
+      return res.status(400).json({ error: mapUploadError(uploadError) });
     }
-    trainingSummary = trainingResult.data;
+
+    const uploadedPath = req.file && req.file.path;
+
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: "Please upload a dataset file before running the analysis." });
+      }
+
+      const modelName = String(req.body.model || "").trim();
+      if (!MODEL_KEYS.includes(modelName)) {
+        return res.status(400).json({
+          error: "Invalid model name. Please choose decision_tree, random_forest, logistic_regression, or xgboost."
+        });
+      }
+
+      const missingModels = MODEL_KEYS.filter((modelKey) => !fs.existsSync(path.join(MODELS_DIR, `${modelKey}.joblib`)));
+      if (missingModels.length > 0) {
+        return res.status(400).json({
+          error: "Trained model files are missing.",
+          details: "Run `python train_models.py --data \"path\\to\\set A corporate_rating.csv\"` first to create the saved models."
+        });
+      }
+
+      const result = runPredictionScript(modelName, uploadedPath);
+
+      if (!result.ok) {
+        return res.status(400).json({
+          error: result.error,
+          details: result.details || null
+        });
+      }
+
+      const response = result.data;
+      if (response.output_csv) {
+        response.output_csv_url = `/outputs/${path.basename(response.output_csv)}`;
+      }
+
+      return res.json(response);
+    } finally {
+      removeUploadedFile(uploadedPath);
+    }
+  });
+});
+
+app.use((error, _req, res, next) => {
+  if (error instanceof multer.MulterError) {
+    return res.status(400).json({ error: mapUploadError(error) });
   }
 
-  const result = runPredictionScript(modelName, req.file.path);
-
-  if (!result.ok) {
-    return res.status(400).json({
-      error: result.error,
-      details: result.details || null
-    });
+  if (error) {
+    return res.status(400).json({ error: error.message || "Upload failed." });
   }
 
-  const response = result.data;
-  if (trainingSummary) {
-    response.training_summary = trainingSummary;
-  }
-  if (response.output_csv) {
-    response.output_csv_url = `/outputs/${path.basename(response.output_csv)}`;
-  }
-
-  return res.json(response);
+  return next();
 });
 
 app.use((req, res) => {

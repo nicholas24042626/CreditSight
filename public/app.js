@@ -10,6 +10,7 @@ const confusionMatrix = document.getElementById("confusionMatrix");
 const classificationReport = document.getElementById("classificationReport");
 const predictionTable = document.getElementById("predictionTable");
 const downloadLink = document.getElementById("downloadLink");
+const metricsNote = document.getElementById("metricsNote");
 
 // These small helpers keep the page updates easy to read.
 function showStatus(message, type) {
@@ -23,10 +24,11 @@ function clearResults() {
   accuracy.textContent = "-";
   weightedF1.textContent = "-";
   macroF1.textContent = "-";
+  metricsNote.textContent = "These metrics come from Dataset A's held-out test set, not the uploaded company file.";
   confusionMatrix.innerHTML = '<div class="empty-state">Run an analysis to see the matrix.</div>';
   classificationReport.textContent = "Run an analysis to see the report.";
   predictionTable.querySelector("tbody").innerHTML =
-    '<tr><td colspan="2" class="empty-state">Run an analysis to see row-level predictions.</td></tr>';
+    '<tr><td colspan="3" class="empty-state">Run an analysis to see row-level predictions.</td></tr>';
   downloadLink.href = "#";
   downloadLink.classList.add("disabled");
 }
@@ -50,7 +52,7 @@ function renderConfusionMatrix(matrix, labels) {
 function renderPredictionRows(rows) {
   const body = predictionTable.querySelector("tbody");
   body.innerHTML = rows
-    .map((row) => `<tr><td>${row.row_index}</td><td>${row.predicted_rating_group}</td></tr>`)
+    .map((row) => `<tr><td>${row.row_index}</td><td>${row.predicted_rating_group}</td><td>${row.confidence_score === null ? "N/A" : Number(row.confidence_score).toFixed(4)}</td></tr>`)
     .join("");
 }
 
@@ -84,9 +86,10 @@ form.addEventListener("submit", async (event) => {
     }
 
     selectedModel.textContent = payload.model_display_name || payload.model_name || modelSelect.options[modelSelect.selectedIndex].text;
-    accuracy.textContent = formatPercent(payload.metrics.accuracy);
-    weightedF1.textContent = formatPercent(payload.metrics.weighted_f1);
-    macroF1.textContent = formatPercent(payload.metrics.macro_f1);
+    accuracy.textContent = formatPercent(payload.metrics.baseline_test_accuracy);
+    weightedF1.textContent = formatPercent(payload.metrics.baseline_test_weighted_f1);
+    macroF1.textContent = formatPercent(payload.metrics.baseline_test_macro_f1);
+    metricsNote.textContent = payload.metrics_note || metricsNote.textContent;
     renderConfusionMatrix(payload.confusion_matrix, payload.class_labels);
     classificationReport.textContent = payload.classification_report_text;
     renderPredictionRows(payload.predictions);
@@ -97,8 +100,7 @@ form.addEventListener("submit", async (event) => {
       downloadLink.textContent = "Download CSV";
     }
 
-    const trainingNote = payload.training_summary ? " Models were trained automatically from your uploaded file first." : "";
-    showStatus(`Analysis completed with ${payload.prediction_count} predicted rows.${trainingNote}`, "success");
+    showStatus(`Analysis completed with ${payload.prediction_count} predicted rows.`, "success");
   } catch (error) {
     showStatus(error.message, "error");
   }

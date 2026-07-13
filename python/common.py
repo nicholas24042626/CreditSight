@@ -219,6 +219,7 @@ def build_model_artifact(
         "categorical_columns": categorical_columns,
         "target_column": target_column,
         "class_labels": CLASS_ORDER,
+        "encoder_class_labels": list(label_encoder.classes_),
         "dataset_summary": dataset_summary,
         "metrics": metrics,
     }

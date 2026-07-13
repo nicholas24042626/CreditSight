@@ -238,6 +238,12 @@ select {
   font-size: 1.08rem;
 }
 
+.metrics-note {
+  margin: 14px 0 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
 .download-row {
   margin-top: 18px;
 }
@@ -291,6 +297,18 @@ th {
 
 .table-wrap .empty-state {
   padding: 18px;
+}
+
+.disclaimer-card {
+  margin-top: 20px;
+}
+
+.disclaimer-text {
+  margin: 0;
+  padding: 4px 2px;
+  color: var(--muted);
+  font-weight: 700;
+  line-height: 1.6;
 }
 
 @media (max-width: 900px) {
