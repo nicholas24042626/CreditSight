@@ -97,6 +97,7 @@ Small and Medium Enterprises (SMEs) are a distinct problem from large corporate 
 ## 2.3 The Existing Manual Process and Its Problems
 
 A traditional bank SME credit process typically involves a credit officer manually:
+
 1. Collecting financial statements (balance sheet, income statement, cash flow statement).
 2. Computing standard ratios (liquidity, profitability, leverage, efficiency).
 3. Comparing those ratios against internal or industry benchmarks.
@@ -113,12 +114,14 @@ A traditional bank SME credit process typically involves a credit officer manual
 ## 2.4 Benefits an ML Approach Offers (and honestly, its costs)
 
 **Benefits:**
+
 - Consistency: the same input always produces the same output (a property manual judgement does not have).
 - Speed and scale: thousands of predictions per second once trained.
 - A quantifiable, reproducible baseline that a human analyst can use as a starting point rather than a blank page.
 - Feature importance / SHAP analysis (§11) can make the model's reasoning partially transparent, which supports rather than replaces human review.
 
 **Costs / risks (raise these proactively in your defence, it signals maturity):**
+
 - A model is only as good as its training labels; if agency ratings encode any systematic bias (e.g., sector bias, home-country bias), the model reproduces that bias.
 - A wrong automated decision at scale can do more damage, faster, than a wrong manual decision, because it is applied uniformly and without a sanity-check step.
 - Regulatory context: real-world credit models used for lending decisions are subject to model risk management regulation (e.g., SR 11-7 in the US, or equivalent regulator guidance elsewhere) requiring documented validation, explainability, and ongoing monitoring — none of which this prototype implements, and that is fine for an FYP but worth naming as "production readiness gap," not oversight.
@@ -126,11 +129,13 @@ A traditional bank SME credit process typically involves a credit officer manual
 ## 2.5 Project Scope
 
 **In scope (what the code actually does):**
+
 - Train four classifiers on one labelled dataset of corporate financial ratios mapped to a 4-class rating grouping.
 - Serve those trained models via a web UI that accepts a user-uploaded file and returns predictions, confidence, and standard classification metrics computed on the *original held-out test set* (not on the uploaded file, since the uploaded file has no ground-truth labels to compare against — an important distinction, see §12.3).
 - Provide comparative model exploration notebooks with confusion matrices and SHAP explanations for offline analysis.
 
 **Out of scope (name these explicitly so an evaluator doesn't assume you missed them):**
+
 - Real-time data ingestion from financial APIs or accounting systems.
 - Retraining or continuous learning from new data.
 - Regulatory-grade model validation, bias auditing, or explainability delivered *in the live app* (SHAP exists only in notebooks).
@@ -152,15 +157,16 @@ The training data lives at `data/set A corporate_rating.csv`. I loaded it direct
 
 ## 3.2 Dataset Structure: Every Column Explained
 
-| # | Column | Type | Role | Meaning |
-|---|--------|------|------|---------|
-| 1 | `Rating` | categorical (string) | **Target (raw)** | The agency-assigned letter grade: one of AAA, AA, A, BBB, BB, B, CCC, CC, C, D. This is the ground truth the whole project is built around. |
-| 2 | `Name` | categorical (string) | Identifier — dropped before training | Company name. Dropped because it's a unique/near-unique identifier that would let a tree-based model "memorize" companies instead of learning general ratio patterns (a textbook data-leakage risk, see §5.9). |
-| 3 | `Symbol` | categorical (string) | Identifier — dropped | Stock ticker symbol. Same reasoning as `Name`. |
-| 4 | `Rating Agency Name` | categorical (string) | Identifier — dropped | Which agency (e.g., S&P, Moody's, Fitch-equivalent) issued the rating. Dropped in this project; in principle it *could* be a legitimate feature (agencies have known differences in rating philosophy) but including it also risks leaking agency-specific labelling quirks rather than teaching the model financial reasoning. |
-| 5 | `Date` | categorical (string) | Identifier — dropped | Rating date. Dropped rather than used to build a proper time-based train/test split — see the discussion of temporal validation in §5.8 and the critique in §16. |
-| 6 | `Sector` | categorical (string) | **Feature (kept)** | The company's industry sector, e.g., Energy, Technology, Finance, Health Care (12 sectors observed in the data). This is the **only categorical feature actually used by the models** — it is one-hot encoded (§5.4). |
-| 7–30 | 24 financial ratio columns | numeric (float) | **Features (kept)** | Explained individually in §3.4. |
+
+| #     | Column                     | Type                 | Role                                  | Meaning                                                                                                                                                                                                                                                                                                                        |
+| ----- | -------------------------- | -------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1     | `Rating`                   | categorical (string) | **Target (raw)**                      | The agency-assigned letter grade: one of AAA, AA, A, BBB, BB, B, CCC, CC, C, D. This is the ground truth the whole project is built around.                                                                                                                                                                                    |
+| 2     | `Name`                     | categorical (string) | Identifier — dropped before training | Company name. Dropped because it's a unique/near-unique identifier that would let a tree-based model "memorize" companies instead of learning general ratio patterns (a textbook data-leakage risk, see §5.9).                                                                                                                |
+| 3     | `Symbol`                   | categorical (string) | Identifier — dropped                 | Stock ticker symbol. Same reasoning as`Name`.                                                                                                                                                                                                                                                                                  |
+| 4     | `Rating Agency Name`       | categorical (string) | Identifier — dropped                 | Which agency (e.g., S&P, Moody's, Fitch-equivalent) issued the rating. Dropped in this project; in principle it*could* be a legitimate feature (agencies have known differences in rating philosophy) but including it also risks leaking agency-specific labelling quirks rather than teaching the model financial reasoning. |
+| 5     | `Date`                     | categorical (string) | Identifier — dropped                 | Rating date. Dropped rather than used to build a proper time-based train/test split — see the discussion of temporal validation in §5.8 and the critique in §16.                                                                                                                                                            |
+| 6     | `Sector`                   | categorical (string) | **Feature (kept)**                    | The company's industry sector, e.g., Energy, Technology, Finance, Health Care (12 sectors observed in the data). This is the**only categorical feature actually used by the models** — it is one-hot encoded (§5.4).                                                                                                         |
+| 7–30 | 24 financial ratio columns | numeric (float)      | **Features (kept)**                   | Explained individually in §3.4.                                                                                                                                                                                                                                                                                               |
 
 Columns 2–5 are removed automatically by name-matching logic in `common.py` (the `IDENTIFIER_ALIASES` list), not by hardcoding column positions — this matters because it makes the pipeline somewhat dataset-agnostic (see §5.2).
 
@@ -168,18 +174,19 @@ Columns 2–5 are removed automatically by name-matching logic in `common.py` (t
 
 **Raw target:** `Rating`, with the observed class distribution in the full 2,029-row dataset:
 
+
 | Rating | Count | % of data |
-|---|---|---|
-| BBB | 671 | 33.1% |
-| BB | 490 | 24.2% |
-| A | 398 | 19.6% |
-| B | 302 | 14.9% |
-| AA | 89 | 4.4% |
-| CCC | 64 | 3.2% |
-| AAA | 7 | 0.3% |
-| CC | 5 | 0.2% |
-| C | 2 | 0.1% |
-| D | 1 | 0.05% |
+| ------ | ----- | --------- |
+| BBB    | 671   | 33.1%     |
+| BB     | 490   | 24.2%     |
+| A      | 398   | 19.6%     |
+| B      | 302   | 14.9%     |
+| AA     | 89    | 4.4%      |
+| CCC    | 64    | 3.2%      |
+| AAA    | 7     | 0.3%      |
+| CC     | 5     | 0.2%      |
+| C      | 2     | 0.1%      |
+| D      | 1     | 0.05%     |
 
 Look at the tail: **AAA has 7 examples, CC has 5, C has 2, D has exactly 1.** No machine learning algorithm can learn a statistically reliable pattern for a class it has seen once. This single fact is the *real* justification for grouping ratings — not a stylistic choice, but a statistical necessity. Make this your first-line answer whenever asked "why did you group the ratings instead of predicting all 10?"
 
@@ -198,12 +205,13 @@ This mirrors the real-world **investment-grade vs. speculative-grade (junk) boun
 
 **Resulting `RatingGroup` distribution** (computed from the training summary's confusion matrix row totals on the 609-row test set, which is a stratified 30% sample so the full-dataset proportions are the same up to rounding):
 
-| RatingGroup | Test-set support | Approx. % |
-|---|---|---|
-| Speculative | 238 | 39.1% |
-| Investment-Low | 201 | 33.0% |
-| Investment-High | 148 | 24.3% |
-| Distressed | 22 | 3.6% |
+
+| RatingGroup     | Test-set support | Approx. % |
+| --------------- | ---------------- | --------- |
+| Speculative     | 238              | 39.1%     |
+| Investment-Low  | 201              | 33.0%     |
+| Investment-High | 148              | 24.3%     |
+| Distressed      | 22               | 3.6%      |
 
 This is still an imbalanced target (3.6% vs 39.1%), but far more learnable than the 10-class version where the smallest class was 0.05%. See §6 for a full treatment of class imbalance.
 
@@ -215,58 +223,64 @@ Every one of these is a standard financial statement ratio. Grouping them by the
 
 ### Liquidity ratios (can the company pay its short-term bills?)
 
-| Ratio | Formula | Interpretation |
-|---|---|---|
-| `currentRatio` | Current Assets ÷ Current Liabilities | Above 1 means the company has more short-term assets than short-term debts due within a year. Banks like to see this comfortably above 1; too high (e.g. >3) can also signal inefficient use of capital (idle cash instead of being invested). |
-| `quickRatio` | (Current Assets − Inventory) ÷ Current Liabilities | A stricter version of the current ratio that excludes inventory, which may not convert to cash quickly. Also called the "acid-test ratio." |
-| `cashRatio` | Cash & Cash Equivalents ÷ Current Liabilities | The strictest liquidity measure — can the company pay its immediate bills with cash alone, with no reliance on selling anything? |
-| `daysOfSalesOutstanding` (DSO) | (Accounts Receivable ÷ Revenue) × 365 | Average number of days it takes the company to collect payment after a sale. Lower is generally better (faster cash collection); very high DSO can signal customers struggling to pay, which is a leading indicator of the company's own cash-flow stress. |
+
+| Ratio                          | Formula                                              | Interpretation                                                                                                                                                                                                                                             |
+| ------------------------------ | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `currentRatio`                 | Current Assets ÷ Current Liabilities                | Above 1 means the company has more short-term assets than short-term debts due within a year. Banks like to see this comfortably above 1; too high (e.g. >3) can also signal inefficient use of capital (idle cash instead of being invested).             |
+| `quickRatio`                   | (Current Assets − Inventory) ÷ Current Liabilities | A stricter version of the current ratio that excludes inventory, which may not convert to cash quickly. Also called the "acid-test ratio."                                                                                                                 |
+| `cashRatio`                    | Cash & Cash Equivalents ÷ Current Liabilities       | The strictest liquidity measure — can the company pay its immediate bills with cash alone, with no reliance on selling anything?                                                                                                                          |
+| `daysOfSalesOutstanding` (DSO) | (Accounts Receivable ÷ Revenue) × 365              | Average number of days it takes the company to collect payment after a sale. Lower is generally better (faster cash collection); very high DSO can signal customers struggling to pay, which is a leading indicator of the company's own cash-flow stress. |
 
 ### Profitability ratios (does the company make money, and how efficiently?)
 
-| Ratio | Formula | Interpretation |
-|---|---|---|
-| `netProfitMargin` | Net Income ÷ Revenue | The share of every revenue dollar that becomes final, after-everything profit. |
-| `pretaxProfitMargin` | Pre-tax Income ÷ Revenue | Same idea, before tax effects — isolates operating and financing performance from tax jurisdiction differences. |
-| `grossProfitMargin` | (Revenue − Cost of Goods Sold) ÷ Revenue | How much margin is left after only direct production costs — a measure of pricing power / production efficiency. |
-| `operatingProfitMargin` | Operating Income ÷ Revenue | Profitability from core operations only, before interest and tax — isolates the business itself from how it's financed. |
-| `returnOnAssets` (ROA) | Net Income ÷ Total Assets | How efficiently the company turns its total asset base into profit. |
-| `returnOnCapitalEmployed` (ROCE) | EBIT ÷ (Total Assets − Current Liabilities) | Profitability relative to *all* capital actually deployed in the business (debt + equity), a favourite of credit analysts because it's capital-structure-neutral. |
-| `returnOnEquity` (ROE) | Net Income ÷ Shareholders' Equity | Return generated for equity holders specifically — note this ratio is mechanically inflated by higher debt (leverage), so it must always be read alongside leverage ratios. |
+
+| Ratio                            | Formula                                       | Interpretation                                                                                                                                                               |
+| -------------------------------- | --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `netProfitMargin`                | Net Income ÷ Revenue                         | The share of every revenue dollar that becomes final, after-everything profit.                                                                                               |
+| `pretaxProfitMargin`             | Pre-tax Income ÷ Revenue                     | Same idea, before tax effects — isolates operating and financing performance from tax jurisdiction differences.                                                             |
+| `grossProfitMargin`              | (Revenue − Cost of Goods Sold) ÷ Revenue    | How much margin is left after only direct production costs — a measure of pricing power / production efficiency.                                                            |
+| `operatingProfitMargin`          | Operating Income ÷ Revenue                   | Profitability from core operations only, before interest and tax — isolates the business itself from how it's financed.                                                     |
+| `returnOnAssets` (ROA)           | Net Income ÷ Total Assets                    | How efficiently the company turns its total asset base into profit.                                                                                                          |
+| `returnOnCapitalEmployed` (ROCE) | EBIT ÷ (Total Assets − Current Liabilities) | Profitability relative to*all* capital actually deployed in the business (debt + equity), a favourite of credit analysts because it's capital-structure-neutral.             |
+| `returnOnEquity` (ROE)           | Net Income ÷ Shareholders' Equity            | Return generated for equity holders specifically — note this ratio is mechanically inflated by higher debt (leverage), so it must always be read alongside leverage ratios. |
 
 ### Efficiency / turnover ratios (how well does the company use its assets?)
 
-| Ratio | Formula | Interpretation |
-|---|---|---|
-| `assetTurnover` | Revenue ÷ Total Assets | How much revenue is generated per dollar of assets — a measure of asset-use efficiency. |
-| `fixedAssetTurnover` | Revenue ÷ Net Fixed Assets | Same idea, focused on property/plant/equipment specifically. |
-| `payablesTurnover` | Cost of Goods Sold ÷ Accounts Payable | How quickly the company pays its own suppliers; very low turnover (slow paying) can be a red flag for cash stress, but can also just reflect strong supplier negotiating leverage. |
+
+| Ratio                | Formula                                | Interpretation                                                                                                                                                                     |
+| -------------------- | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `assetTurnover`      | Revenue ÷ Total Assets                | How much revenue is generated per dollar of assets — a measure of asset-use efficiency.                                                                                           |
+| `fixedAssetTurnover` | Revenue ÷ Net Fixed Assets            | Same idea, focused on property/plant/equipment specifically.                                                                                                                       |
+| `payablesTurnover`   | Cost of Goods Sold ÷ Accounts Payable | How quickly the company pays its own suppliers; very low turnover (slow paying) can be a red flag for cash stress, but can also just reflect strong supplier negotiating leverage. |
 
 ### Leverage / solvency ratios (how much debt risk is the company carrying?)
 
-| Ratio | Formula | Interpretation |
-|---|---|---|
-| `debtEquityRatio` | Total Debt ÷ Shareholders' Equity | The classic leverage ratio — how much the company relies on debt vs. owner capital. Higher means more financial risk and more fixed interest obligations regardless of how the business is performing. |
-| `debtRatio` | Total Debt ÷ Total Assets | What proportion of the company's total assets are debt-financed. |
-| `companyEquityMultiplier` | Total Assets ÷ Shareholders' Equity | Another leverage lens — how many dollars of assets are supported by each dollar of equity; this is the third factor in the classic **DuPont ROE decomposition** (ROE = Net Margin × Asset Turnover × Equity Multiplier), which is a great fact to know for a "do you understand these ratios or did you just copy column names" evaluator question. |
+
+| Ratio                     | Formula                              | Interpretation                                                                                                                                                                                                                                                                                                                                        |
+| ------------------------- | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `debtEquityRatio`         | Total Debt ÷ Shareholders' Equity   | The classic leverage ratio — how much the company relies on debt vs. owner capital. Higher means more financial risk and more fixed interest obligations regardless of how the business is performing.                                                                                                                                               |
+| `debtRatio`               | Total Debt ÷ Total Assets           | What proportion of the company's total assets are debt-financed.                                                                                                                                                                                                                                                                                      |
+| `companyEquityMultiplier` | Total Assets ÷ Shareholders' Equity | Another leverage lens — how many dollars of assets are supported by each dollar of equity; this is the third factor in the classic**DuPont ROE decomposition** (ROE = Net Margin × Asset Turnover × Equity Multiplier), which is a great fact to know for a "do you understand these ratios or did you just copy column names" evaluator question. |
 
 ### Cash flow ratios (does reported profit actually turn into cash?)
 
-| Ratio | Formula | Interpretation |
-|---|---|---|
-| `freeCashFlowOperatingCashFlowRatio` | Free Cash Flow ÷ Operating Cash Flow | What fraction of cash generated from operations remains after capital expenditure — a measure of how "expensive" the business is to maintain and grow. |
-| `freeCashFlowPerShare` | Free Cash Flow ÷ Shares Outstanding | Free cash flow scaled to a per-share basis. |
-| `cashPerShare` | Cash & Equivalents ÷ Shares Outstanding | Cash cushion per share. |
-| `operatingCashFlowPerShare` | Operating Cash Flow ÷ Shares Outstanding | Operating cash generation per share. |
-| `operatingCashFlowSalesRatio` | Operating Cash Flow ÷ Revenue | Cash-conversion quality of revenue — a company with strong reported profit but weak operating cash flow is a classic earnings-quality warning sign (this is exactly the pattern that flagged some historical accounting scandals). |
+
+| Ratio                                | Formula                                   | Interpretation                                                                                                                                                                                                                      |
+| ------------------------------------ | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `freeCashFlowOperatingCashFlowRatio` | Free Cash Flow ÷ Operating Cash Flow     | What fraction of cash generated from operations remains after capital expenditure — a measure of how "expensive" the business is to maintain and grow.                                                                             |
+| `freeCashFlowPerShare`               | Free Cash Flow ÷ Shares Outstanding      | Free cash flow scaled to a per-share basis.                                                                                                                                                                                         |
+| `cashPerShare`                       | Cash & Equivalents ÷ Shares Outstanding  | Cash cushion per share.                                                                                                                                                                                                             |
+| `operatingCashFlowPerShare`          | Operating Cash Flow ÷ Shares Outstanding | Operating cash generation per share.                                                                                                                                                                                                |
+| `operatingCashFlowSalesRatio`        | Operating Cash Flow ÷ Revenue            | Cash-conversion quality of revenue — a company with strong reported profit but weak operating cash flow is a classic earnings-quality warning sign (this is exactly the pattern that flagged some historical accounting scandals). |
 
 ### Tax and valuation
 
-| Ratio | Formula | Interpretation |
-|---|---|---|
-| `effectiveTaxRate` | Tax Expense ÷ Pre-tax Income | The actual tax rate paid, which can differ from the statutory rate due to credits, jurisdictions, and deductions. |
-| `ebitPerRevenue` | EBIT ÷ Revenue | Earnings before interest and tax, scaled to revenue — closely related to operating margin. |
-| `enterpriseValueMultiple` | Enterprise Value ÷ EBITDA | A market-based valuation multiple; unusual to see alongside pure accounting ratios, and its presence tells you the source dataset blended fundamental accounting data with market pricing data — a good detail to mention if asked "are all your features from the same source type?" |
+
+| Ratio                     | Formula                       | Interpretation                                                                                                                                                                                                                                                                         |
+| ------------------------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `effectiveTaxRate`        | Tax Expense ÷ Pre-tax Income | The actual tax rate paid, which can differ from the statutory rate due to credits, jurisdictions, and deductions.                                                                                                                                                                      |
+| `ebitPerRevenue`          | EBIT ÷ Revenue               | Earnings before interest and tax, scaled to revenue — closely related to operating margin.                                                                                                                                                                                            |
+| `enterpriseValueMultiple` | Enterprise Value ÷ EBITDA    | A market-based valuation multiple; unusual to see alongside pure accounting ratios, and its presence tells you the source dataset blended fundamental accounting data with market pricing data — a good detail to mention if asked "are all your features from the same source type?" |
 
 ### Why banks care about all of this, in one sentence each
 
@@ -348,6 +362,7 @@ python python/predict.py --model <model_key> --input <uploaded_file_path> --outp
 **`spawnSync` is a synchronous, blocking subprocess call** — Node pauses the current request handler until the Python process exits, then reads its `stdout`/`stderr`/exit code. This is simple to reason about but has a real consequence: **while one prediction request is running, that specific request's event loop turn is blocked on the OS process**, though other concurrent requests to different endpoints not hitting `spawnSync` continue to work in Node's single-threaded event loop because `spawnSync` blocks only within its own call stack, not other pending callbacks already scheduled — you should still be ready to explain that under heavy concurrent load, this pattern does not scale as well as an async job queue would, because each `/api/analyze` request effectively holds up Node's single thread for the full lifetime of the Python process (typically well under a second for this dataset size, but worth naming as a scaling limitation).
 
 **Data contract between the two processes:**
+
 - Input: a file path on disk (the uploaded CSV/Excel) plus a model key.
 - Output: `predict.py` **prints exactly one JSON object to stdout** on success, or prints a JSON error object and exits with status code 1 on failure (see `error_json()` in `predict.py`, §12.3). Node parses this from `pythonResult.stdout`.
 - Side effect: `predict.py` also writes a full predictions CSV to the `outputs/` folder, which Node exposes at a public URL and never parses itself.
@@ -372,15 +387,16 @@ The four `.joblib` files in `models/` are the **trained artifacts** — expensiv
 
 ## 4.6 Folder-by-Folder Purpose
 
-| Folder | Purpose | Persisted? |
-|---|---|---|
-| `public/` | Static frontend assets served directly by Express | Source-controlled, static |
-| `python/` | All ML logic: shared helpers (`common.py`), training entry point (`train_models.py`), prediction entry point (`predict.py`) | Source-controlled |
-| `models/` | Serialized trained pipelines (`.joblib`) + `training_summary.json` | Generated by training, persists between server restarts |
-| `data/` | The labelled training dataset | Source-controlled input |
-| `uploads/` | Transient storage for user-uploaded files during a single request | Deleted immediately after each request (in principle — see §16 for an actual bug found in the repo: leftover files from past sessions are visible in `uploads/`, which suggests the cleanup path doesn't always fire, worth investigating before your defence) |
-| `outputs/` | Generated prediction result CSVs, one per request, served back to the browser for download | Accumulates indefinitely — no cleanup job exists |
-| `notebook/` | Four exploratory/training notebooks, one per model, not used by the running application | Source-controlled, for analysis only |
+
+| Folder      | Purpose                                                                                                                     | Persisted?                                                                                                                                                                                                                                                      |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `public/`   | Static frontend assets served directly by Express                                                                           | Source-controlled, static                                                                                                                                                                                                                                       |
+| `python/`   | All ML logic: shared helpers (`common.py`), training entry point (`train_models.py`), prediction entry point (`predict.py`) | Source-controlled                                                                                                                                                                                                                                               |
+| `models/`   | Serialized trained pipelines (`.joblib`) + `training_summary.json`                                                          | Generated by training, persists between server restarts                                                                                                                                                                                                         |
+| `data/`     | The labelled training dataset                                                                                               | Source-controlled input                                                                                                                                                                                                                                         |
+| `uploads/`  | Transient storage for user-uploaded files during a single request                                                           | Deleted immediately after each request (in principle — see §16 for an actual bug found in the repo: leftover files from past sessions are visible in`uploads/`, which suggests the cleanup path doesn't always fire, worth investigating before your defence) |
+| `outputs/`  | Generated prediction result CSVs, one per request, served back to the browser for download                                  | Accumulates indefinitely — no cleanup job exists                                                                                                                                                                                                               |
+| `notebook/` | Four exploratory/training notebooks, one per model, not used by the running application                                     | Source-controlled, for analysis only                                                                                                                                                                                                                            |
 
 ## 4.7 Why the Web App Doesn't Retrain on Upload
 
@@ -520,6 +536,7 @@ The parameter $\lambda$ (lambda) is estimated from the data itself (typically by
 **Why it would have been appropriate here, if used, and for which model specifically.** Given that `LogisticRegression` is the one model in this project sensitive to feature distribution shape and scale (§5.5), and given that several of your 24 ratios are plausibly right-skewed and can take negative values (`netProfitMargin`, `returnOnEquity`, `pretaxProfitMargin` for loss-making companies), **Yeo-Johnson would have been the theoretically correct choice over Box-Cox specifically because of the negative values present in this dataset** — this is the strongest, most technically precise answer available to you on this topic, and it directly ties back to why Logistic Regression underperformed (§5.5, §7.1, §10).
 
 **Likely evaluator questions on this topic:**
+
 - *"Did you check your features for skewness before training?"* → Honest answer: no formal skewness check (e.g., no computed `scipy.stats.skew()` values) was performed in the code; this would be a natural addition to an EDA (exploratory data analysis) step.
 - *"Would Yeo-Johnson have improved your Logistic Regression results?"* → Plausibly yes, since Logistic Regression is scale/shape-sensitive and currently receives no scaling or transform at all; you cannot claim a guaranteed improvement without having run the experiment, and you should say exactly that rather than overclaiming.
 - *"Why would Box-Cox fail on your dataset specifically?"* → Because several ratio columns (e.g., `netProfitMargin`, `returnOnEquity`) contain negative values for loss-making or negative-equity companies, and Box-Cox requires strictly positive input.
@@ -565,6 +582,7 @@ X_train, X_test, y_train, y_test = train_test_split(
 **Why it's dangerous.** A leaky model can show excellent test-set accuracy while being nearly useless once deployed, because the "shortcut" information it learned to rely on isn't present (or isn't valid) for genuinely new, real-world cases. It is one of the most common reasons a published ML result fails to replicate.
 
 **Concrete leakage risks this project actively avoids, and how:**
+
 - **Identifier leakage**: `Name` and `Symbol` are dropped before training (§3.2). If left in, a tree-based model could in principle learn to "memorize" that a specific named company always got a specific rating, rather than learning the general ratio-to-rating relationship — this would look excellent on a test set containing rows for companies also seen in training (which is likely here, since ratings are recorded per company *per date*, so the same company could appear at multiple dates split across train/test) but would fail immediately on a genuinely new company at prediction time.
 - **Target leakage via `Rating Agency Name`**: dropped from features. This is a softer, more debatable case — is agency identity a legitimate signal, or could it leak agency-specific rating quirks a model shouldn't be "cheating" with? Removing it is the conservative, safer choice.
 - **Fit-on-train-only preprocessing**: the `SimpleImputer` and `OneHotEncoder` inside the pipeline are `.fit()` only on `X_train` (because `pipeline.fit(X_train, y_train_encoded)` fits the *entire* pipeline, imputer included, using only training rows), then applied (`.transform`, not re-fit) to `X_test`. If the imputer's median or the encoder's known categories had instead been computed from the *full* dataset (train+test combined) before splitting, that would be a subtle, classic leakage bug — test-set statistics would have quietly influenced what the "training" data looks like. **This project avoids that bug correctly** by putting the imputer inside the `Pipeline` object itself rather than pre-processing the whole dataset once before splitting.
@@ -645,12 +663,13 @@ Verified by direct search: there is no import of `imblearn` (the standard Python
 
 Be direct about this in your report and defence rather than hoping it isn't noticed: **the confusion matrices in `training_summary.json` show every single model struggling badly on the `Distressed` class specifically**, which is exactly the pattern the theory above predicts for an imbalanced dataset trained without any corrective technique:
 
-| Model | Distressed recall (of 22 true Distressed rows) | Distressed precision | Distressed predicted at all? |
-|---|---|---|---|
-| Decision Tree | 7/22 = 32% | 33% | Yes, 21 times total (14 wrong) |
-| Random Forest | 2/22 = 9% | 100% | Only 2 times in the whole 609-row test set, both correct |
-| Logistic Regression | 0/22 = 0% | 0% | Yes, 7 times — but every single one was actually a Speculative company, never a real Distressed one |
-| XGBoost | 3/22 = 14% | 60% | 5 times total (2 wrong) |
+
+| Model               | Distressed recall (of 22 true Distressed rows) | Distressed precision | Distressed predicted at all?                                                                         |
+| ------------------- | ---------------------------------------------- | -------------------- | ---------------------------------------------------------------------------------------------------- |
+| Decision Tree       | 7/22 = 32%                                     | 33%                  | Yes, 21 times total (14 wrong)                                                                       |
+| Random Forest       | 2/22 = 9%                                      | 100%                 | Only 2 times in the whole 609-row test set, both correct                                             |
+| Logistic Regression | 0/22 = 0%                                      | 0%                   | Yes, 7 times — but every single one was actually a Speculative company, never a real Distressed one |
+| XGBoost             | 3/22 = 14%                                     | 60%                  | 5 times total (2 wrong)                                                                              |
 
 (All four numbers per model are taken directly from the `classification_report_text` in `models/training_summary.json` and cross-checked against the raw confusion matrices.)
 
@@ -676,11 +695,15 @@ Despite the name, Logistic Regression is a **classification** algorithm, not a r
 
 For binary classification, Logistic Regression computes a linear combination of the input features:
 
-$$z = w_0 + w_1 x_1 + w_2 x_2 + \dots + w_n x_n$$
+$$
+z = w_0 + w_1 x_1 + w_2 x_2 + \dots + w_n x_n
+$$
 
 then passes $z$ through the **sigmoid function**:
 
-$$\sigma(z) = \frac{1}{1 + e^{-z}}$$
+$$
+\sigma(z) = \frac{1}{1 + e^{-z}}
+$$
 
 which maps any real number $z \in (-\infty, \infty)$ to a probability in $(0,1)$. As $z \to +\infty$, $\sigma(z) \to 1$; as $z \to -\infty$, $\sigma(z) \to 0$; at $z=0$, $\sigma(z)=0.5$. The model predicts the class with probability $\geq 0.5$ (in the binary case).
 
@@ -688,7 +711,9 @@ which maps any real number $z \in (-\infty, \infty)$ to a probability in $(0,1)$
 
 **Multi-class extension.** For more than two classes (this project's four `RatingGroup` buckets), scikit-learn's `LogisticRegression` by default uses a **multinomial** formulation (softmax regression): it computes one linear score $z_k$ per class $k$, then converts all $K$ scores into a probability distribution over classes using the **softmax function**:
 
-$$P(y=k \mid x) = \frac{e^{z_k}}{\sum_{j=1}^{K} e^{z_j}}$$
+$$
+P(y=k \mid x) = \frac{e^{z_k}}{\sum_{j=1}^{K} e^{z_j}}
+$$
 
 This guarantees all $K$ class probabilities are positive and sum to exactly 1. The predicted class is simply the one with the highest resulting probability.
 
@@ -697,12 +722,14 @@ This guarantees all $K$ class probabilities are positive and sum to exactly 1. T
 **Coefficients.** Each fitted weight $w_i$ tells you the direction and strength of that feature's linear association with the outcome (for a given class, in the multinomial case). This is exactly why banks historically favour Logistic Regression-style scorecards for credit decisions: a regulator or auditor can look at the model and see, explicitly, "higher debt-to-equity pushes the prediction toward a worse rating bucket, with this specific weight" — a level of transparency tree ensembles and neural networks do not offer natively (hence the need for SHAP, §11, to retrofit similar transparency onto more complex models).
 
 ### Advantages
+
 - Fast to train and to run inference with, even on large datasets.
 - Directly interpretable coefficients — the model *is* its own explanation, unlike black-box alternatives.
 - Outputs well-calibrated-in-principle probabilities via the sigmoid/softmax (though see §10's discussion of calibration — "well-calibrated in principle" is not the same as "verified calibrated in practice," and this project performs no calibration check).
 - A strong, standard baseline that any more complex model should be able to beat to justify its added complexity.
 
 ### Limitations
+
 - Can only model **linear** relationships between features and the log-odds of the outcome — cannot capture interactions between features (e.g., "high debt is only risky *combined with* low profitability") unless those interaction terms are manually engineered in as extra features, which this project does not do (§3.5).
 - Sensitive to feature scale (§5.5) and to skewed/outlier-heavy distributions (§5.6, §5.7) — because it optimizes a weighted sum of raw feature values via gradient-based methods, features on larger raw scales can dominate the fitting process regardless of true importance.
 - Assumes, implicitly, that classes are reasonably separable by straight lines/hyperplanes in the given feature space — a strong assumption for a genuinely nonlinear real-world relationship like credit risk, where ratios likely interact (e.g., high leverage matters far more when profitability is also weak).
@@ -729,7 +756,9 @@ A decision tree makes a prediction by asking a sequence of yes/no questions abou
 
 At each node, the algorithm considers every feature and every possible threshold split of that feature's values, and picks the single split that most reduces **impurity** — a measure of how mixed the classes are among the rows at that node. Scikit-learn's default criterion for `DecisionTreeClassifier` is the **Gini impurity**:
 
-$$\text{Gini} = 1 - \sum_{k=1}^{K} p_k^2$$
+$$
+\text{Gini} = 1 - \sum_{k=1}^{K} p_k^2
+$$
 
 where $p_k$ is the proportion of class $k$ among the rows at that node. Gini impurity is 0 when a node is perfectly pure (all rows belong to one class) and increases toward its maximum as the classes become more evenly mixed. The alternative criterion, **entropy** (from information theory), measures the same underlying idea — how unpredictable the class label is at that node — via $-\sum_k p_k \log_2 p_k$, and choosing a split that most reduces entropy is called maximizing **information gain**. Gini and entropy usually select very similar splits in practice and rarely change the outcome substantially; scikit-learn defaults to Gini partly because it's marginally cheaper to compute (no logarithm).
 
@@ -740,12 +769,14 @@ The tree keeps splitting recursively — each split producing two purer child no
 **Overfitting**, defined precisely, is when a model fits the training data's specific noise and idiosyncrasies so closely that it fails to generalize to new data — the gap between training performance and test performance widens. Because `DecisionTreeClassifier(random_state=42)` has no depth limit and no minimum-samples-per-leaf constraint here, the tree is free to keep splitting until leaves contain very few (potentially single) training examples, effectively memorizing the training set rather than learning general ratio-to-rating rules. This is the textbook mechanism by which unconstrained decision trees overfit, and it is directly consistent with Decision Tree's mediocre 55.0% test accuracy despite being, structurally, the most flexible single model in the comparison (able to fit almost arbitrarily complex decision boundaries, unlike linear Logistic Regression).
 
 ### Advantages
+
 - Naturally interpretable — the learned tree can, in principle, be visualized and read top-to-bottom as an explicit rule list.
 - Handles non-linear relationships and feature interactions automatically (a benefit Logistic Regression lacks), since each split can depend on the outcome of prior splits.
 - Requires no feature scaling (§5.5) — splits compare raw values against thresholds, unaffected by units.
 - Handles mixed numeric/categorical data reasonably.
 
 ### Limitations
+
 - **High variance**: a single decision tree is notoriously unstable — small changes in the training data can produce a substantially different tree structure, because an early split near the top of the tree cascades into completely different downstream splits.
 - Prone to overfitting when unconstrained, as discussed above and as visible in this project's own result.
 - Greedy construction: the algorithm picks the locally best split at each node without looking ahead, so it can miss a globally better tree structure that would require a locally suboptimal split first.
@@ -776,12 +807,14 @@ Two distinct sources of randomness make each tree in the forest different from t
 A single unconstrained decision tree has high **variance** — it fits training noise closely, and that noise differs randomly from one bootstrap sample to another. When you average the predictions of many such high-variance-but-different trees, the noise each individual tree fit tends to cancel out (because it's essentially random and uncorrelated across trees), while the genuine underlying signal — which is present and similar across every bootstrap sample — reinforces itself. This is the direct mathematical reason Random Forest reliably outperforms a single Decision Tree on real-world data, and is exactly what your project's own numbers demonstrate: Random Forest's 68.3% accuracy substantially exceeds the single Decision Tree's 55.0%, using otherwise identical preprocessing and evaluation.
 
 ### Advantages
+
 - Substantially reduces the overfitting/high-variance problem of a single decision tree, as demonstrated directly by this project's own results.
 - Still requires no feature scaling.
 - Provides a natural feature-importance ranking (by how much each feature reduces impurity across all trees and splits) — a lighter-weight alternative to SHAP (§11) available "for free" from the fitted model.
 - Generally robust and a strong default choice across many tabular ML problems without much tuning — which matters directly here, since **no hyperparameter tuning was performed** (§9) and Random Forest still achieved the joint-best accuracy in this project.
 
 ### Limitations
+
 - Loses the direct interpretability of a single tree or of Logistic Regression's coefficients — with (by default) 100 trees, there is no single readable rule list; feature importance is available but is a coarser, aggregate signal, not a full explanation of any individual prediction (this exact gap is what §11's SHAP analysis exists to fill).
 - More computationally expensive to train and to run inference with than a single tree or a linear model, since it must build and query many trees.
 - Can still struggle on very rare classes (§6.4's Distressed-recall table shows Random Forest catching only 2 of 22 true Distressed rows) — bagging and feature subsampling address variance/overfitting, but do **not** address class imbalance; a model can be low-variance and well-averaged while still being systematically biased toward predicting common classes, because the imbalance lives in the training data and loss function, not in the tree-construction randomness.
@@ -837,6 +870,7 @@ flowchart LR
 **What is a residual?** In the simplest regression framing, a residual is the *difference between the true value and the current model's prediction* — literally, the error that's left over. Gradient boosting for classification works with a generalized version of this idea (gradients of a loss function, explained next), but the residual intuition is the right mental model to hold.
 
 **Step by step, conceptually:**
+
 1. Start with a simple initial prediction (e.g., the log-odds corresponding to the overall class frequencies).
 2. Compute how wrong that initial prediction currently is, for every training example — this "wrongness" is the residual/gradient.
 3. Train a new (weak) tree whose job is specifically to predict *that residual* — i.e., to predict the direction and size of correction needed to reduce the current error.
@@ -866,14 +900,15 @@ New trees are trained to fit these gradients (approximately, the direction of st
 
 These are the specific hyperparameters that control how aggressively XGBoost's individual trees can fit, and how much regularization (penalty against complexity, to fight overfitting) is applied. **None of them are explicitly tuned in this project** — all are left at XGBoost's library defaults — but you must be able to define each one, because "what hyperparameters would you tune, and why" is close to a guaranteed question.
 
-| Parameter | What it controls | Why it matters | Default |
-|---|---|---|---|
-| `max_depth` | Maximum depth of each individual weak-learner tree | Deeper trees can capture more complex interactions per round, but risk overfitting to noise within each round; shallower trees are more genuinely "weak" learners | 6 |
-| `gamma` (`min_split_loss`) | The minimum loss-reduction required before the algorithm is allowed to make a further split | Acts as a complexity brake at the split level — a split that doesn't improve the loss by at least `gamma` is refused, pruning away marginal, likely-noise-fitting splits | 0 (no minimum) |
-| `subsample` | Fraction of training rows randomly sampled (without replacement, per boosting round) to train each tree | Introduces bagging-style randomness *within* boosting, reducing correlation between successive trees' errors and reducing overfitting, similar in spirit to Random Forest's bootstrap sampling but applied per-round rather than for the whole ensemble at once | 1.0 (use all rows) |
-| `colsample_bytree` (and variants `colsample_bylevel`/`colsample_bynode`) | Fraction of features randomly sampled for each tree (or level, or split node) | Directly analogous to Random Forest's random feature subsampling (§7.3) — forces diversity across trees and reduces the risk that one dominant feature drives every tree's structure | 1.0 (use all features) |
-| `lambda` (`reg_lambda`) | L2 regularization strength on the leaf weights | Penalizes large leaf output values, shrinking predictions toward zero/moderate values and discouraging the model from assigning extreme confidence based on small amounts of data in any one leaf | 1 |
-| `alpha` (`reg_alpha`) | L1 regularization strength on the leaf weights | Similar goal to `lambda`, but L1 regularization can push some leaf weights to exactly zero, having a sparsifying effect | 0 |
+
+| Parameter                                                                | What it controls                                                                                        | Why it matters                                                                                                                                                                                                                                                 | Default                |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
+| `max_depth`                                                              | Maximum depth of each individual weak-learner tree                                                      | Deeper trees can capture more complex interactions per round, but risk overfitting to noise within each round; shallower trees are more genuinely "weak" learners                                                                                              | 6                      |
+| `gamma` (`min_split_loss`)                                               | The minimum loss-reduction required before the algorithm is allowed to make a further split             | Acts as a complexity brake at the split level — a split that doesn't improve the loss by at least`gamma` is refused, pruning away marginal, likely-noise-fitting splits                                                                                       | 0 (no minimum)         |
+| `subsample`                                                              | Fraction of training rows randomly sampled (without replacement, per boosting round) to train each tree | Introduces bagging-style randomness*within* boosting, reducing correlation between successive trees' errors and reducing overfitting, similar in spirit to Random Forest's bootstrap sampling but applied per-round rather than for the whole ensemble at once | 1.0 (use all rows)     |
+| `colsample_bytree` (and variants `colsample_bylevel`/`colsample_bynode`) | Fraction of features randomly sampled for each tree (or level, or split node)                           | Directly analogous to Random Forest's random feature subsampling (§7.3) — forces diversity across trees and reduces the risk that one dominant feature drives every tree's structure                                                                         | 1.0 (use all features) |
+| `lambda` (`reg_lambda`)                                                  | L2 regularization strength on the leaf weights                                                          | Penalizes large leaf output values, shrinking predictions toward zero/moderate values and discouraging the model from assigning extreme confidence based on small amounts of data in any one leaf                                                              | 1                      |
+| `alpha` (`reg_alpha`)                                                    | L1 regularization strength on the leaf weights                                                          | Similar goal to`lambda`, but L1 regularization can push some leaf weights to exactly zero, having a sparsifying effect                                                                                                                                         | 0                      |
 
 **What is regularization, as a general concept?** Regularization is any technique that adds a penalty for model complexity into the training objective, so the optimizer is discouraged from fitting overly intricate patterns that are likely to be noise specific to the training sample, rather than genuine, generalizable signal. It is the general defence against overfitting that appears across almost every ML algorithm in some form (L1/L2 penalties in linear models, depth/leaf constraints in trees, dropout in neural networks, and the `lambda`/`alpha`/`gamma` family here in XGBoost).
 
@@ -882,6 +917,7 @@ These are the specific hyperparameters that control how aggressively XGBoost's i
 **Bias** is the error introduced by a model being too simple to capture the true underlying pattern (systematic underfitting — e.g., Logistic Regression's inability to represent non-linear relationships, §7.1). **Variance** is the error introduced by a model being too sensitive to the specific noise of its training sample (overfitting — e.g., a single unconstrained Decision Tree, §7.2). The **bias-variance tradeoff** is the general observation that reducing one of these tends to increase the other, and that total generalization error is (informally) the sum of both plus irreducible noise.
 
 **Where each of your four models sits on this spectrum, concretely:**
+
 - Logistic Regression: **high bias** (too simple/linear for this problem, §7.1), relatively low variance.
 - Decision Tree (unconstrained): **high variance** (overfits, §7.2), relatively low bias (flexible enough to represent the true pattern if given enough data and no noise).
 - Random Forest: reduces the Decision Tree's variance via bagging/averaging, without meaningfully increasing bias — this is precisely why it improves on a single tree.
@@ -963,6 +999,7 @@ models = {
 **What Optuna specifically is.** Optuna is a popular open-source Python library implementing this kind of adaptive hyperparameter search, along with convenient features like **pruning** (stopping a clearly unpromising trial early, before it finishes training, to save compute) and a flexible "define-by-run" API for specifying the search space.
 
 **Key Optuna/Bayesian-optimization vocabulary, defined:**
+
 - **Objective function:** the function Optuna is trying to maximize or minimize — typically, "train a model with these hyperparameters, and return its cross-validated accuracy/F1 on held-out data."
 - **Search space:** the range or set of values each hyperparameter is allowed to take during the search (e.g., `learning_rate` between 0.01 and 0.3 on a log scale).
 - **Trial:** one single evaluation of the objective function with one specific hyperparameter combination.
@@ -986,12 +1023,13 @@ models = {
 
 ## 10.1 The Full Results Table (ground truth, from `models/training_summary.json`)
 
-| Model | Accuracy | Weighted F1 | Macro F1 |
-|---|---|---|---|
-| Decision Tree | 0.5501 | 0.5498 | 0.4964 |
-| Random Forest | **0.6831** | 0.6705 | 0.5522 |
-| Logistic Regression | 0.3727 | 0.2422 | 0.1604 |
-| XGBoost | 0.6814 | **0.6709** | **0.5669** |
+
+| Model               | Accuracy   | Weighted F1 | Macro F1   |
+| ------------------- | ---------- | ----------- | ---------- |
+| Decision Tree       | 0.5501     | 0.5498      | 0.4964     |
+| Random Forest       | **0.6831** | 0.6705      | 0.5522     |
+| Logistic Regression | 0.3727     | 0.2422      | 0.1604     |
+| XGBoost             | 0.6814     | **0.6709**  | **0.5669** |
 
 All four numbers for every model are computed identically, by `evaluate_predictions()` in `common.py`, on the **same held-out 609-row stratified test set** (§5.8) — this consistency is what makes the comparison meaningful, and is worth stating explicitly if asked "is this a fair comparison across models."
 
@@ -1151,6 +1189,7 @@ Crucially: **this SHAP analysis exists only inside the four Jupyter notebooks, f
 **LIME (Local Interpretable Model-agnostic Explanations)**, the other major explainability technique, works by fitting a simple, interpretable surrogate model (typically local linear regression) to approximate the complex model's behaviour *only in the small local neighbourhood around one specific prediction*, then reading that surrogate's coefficients as the explanation.
 
 **Why SHAP is generally preferred, and specifically appropriate here:**
+
 - **Theoretical guarantees**: SHAP's Shapley-value foundation guarantees consistency and local accuracy (the efficiency axiom, §11.4) that LIME's locally-fit-surrogate approach does not guarantee — LIME's explanation quality depends on how well a simple local linear model happens to approximate the true model's local behaviour, which is not mathematically guaranteed to be accurate.
 - **Consistency across explanations**: SHAP values for the same feature are computed via the same well-defined game-theoretic procedure every time; LIME's explanations can vary between runs due to the randomness involved in sampling the local neighbourhood for the surrogate fit.
 - **Fast, exact computation for tree models specifically**: `TreeExplainer`'s polynomial-time exact algorithm (§11.4) has no direct LIME equivalent with the same speed/exactness guarantee for tree ensembles — this is a concrete, practical reason SHAP was the more natural choice for a project whose three best-performing models are all tree-based.
@@ -1165,12 +1204,14 @@ Crucially: **this SHAP analysis exists only inside the four Jupyter notebooks, f
 **Purpose:** houses every piece of data-cleaning, schema-matching, and pipeline-construction logic shared between training and prediction, so both scripts stay perfectly consistent (§5.2). It defines no `if __name__ == "__main__"` block — it is never run directly, only imported.
 
 **Key constants:**
+
 - `RATING_GROUP_MAPPING` — the 10-grade → 4-bucket dictionary (§3.3).
 - `CLASS_ORDER` — the fixed, canonical ordering of the four `RatingGroup` labels used consistently for the `LabelEncoder`, the confusion matrix axes, and the classification report, ensuring every model's output is compared and displayed in the same class order.
 - `IDENTIFIER_ALIASES` / `TARGET_ALIASES` — the whitelist-based fuzzy column-matching lists (§5.3).
 - `MODEL_NAME_MAP` / `MODEL_ALIAS_MAP` — human-readable display names and normalized lookup keys for the four model types.
 
 **Key functions and what each does:**
+
 - `normalize_text(value)` — collapses whitespace and trims a string; the base primitive every other text-matching function builds on.
 - `normalize_column_name` / `normalize_model_key` — lower-cased, whitespace-normalized variants used for case/spacing-insensitive matching.
 - `standardize_columns(df)` — renames every DataFrame column via `normalize_text` (§5.3, step 1).
@@ -1197,6 +1238,7 @@ Crucially: **this SHAP analysis exists only inside the four Jupyter notebooks, f
 **Outputs:** four `.joblib` files (one per model) in the output directory, plus `training_summary.json` summarizing dataset cleaning statistics and every model's metrics — and the same JSON is also printed to stdout at the end of the run.
 
 **Function-by-function:**
+
 - `parse_args()` — standard `argparse` CLI definition.
 - `prepare_training_frame(raw_df, target_column_override)` — the full cleaning pipeline described step-by-step in §5.3; returns the cleaned DataFrame plus a `summary` dict recording exactly what happened (row counts before/after, which columns were dropped, missing-value counts, etc.) — this summary dict is itself a form of **data lineage / audit trail**, letting anyone re-check what transformations were applied to produce the trained model, which is good practice worth naming explicitly.
 - `train_single_model(...)` — builds one model's full `Pipeline` (preprocessor + estimator, §5.4), fits it on the training split, evaluates it on the test split, builds and saves its artifact, and returns a summary dict of its results. Called once per model inside a loop in `main()`.
@@ -1215,6 +1257,7 @@ Crucially: **this SHAP analysis exists only inside the four Jupyter notebooks, f
 **Error-handling design — `error_json()`:** every validation failure calls `error_json(message, details)`, which prints a JSON object of the shape `{"error": ..., "details": ...}` and exits with status code 1 via `raise SystemExit(1)`. This is the exact contract `app.js`'s `runPredictionScript()` expects (§4.3) — a clean, structured way for a CLI script to communicate a specific, user-facing failure reason back to its caller, rather than dumping a raw Python traceback that a non-technical end user (or the Node layer) would have no good way to parse or display.
 
 **Validation sequence, in order (each can short-circuit the whole request):**
+
 1. `validate_model_key()` — is the requested model one of the four known keys?
 2. Does the corresponding `.joblib` file actually exist on disk?
 3. Can the uploaded file be parsed at all (`load_tabular_file`, wrapped in try/except)?
@@ -1223,6 +1266,7 @@ Crucially: **this SHAP analysis exists only inside the four Jupyter notebooks, f
 6. Are all the numeric columns actually numeric-parseable (`pd.to_numeric` with a "which specific values failed and where" report, capped at the first 5 examples per bad column, in `invalid_columns`)?
 
 **Prediction logic:**
+
 - `prepared_features = coerce_feature_types(...)` then `pipeline.predict(prepared_features)`, followed by `label_encoder.inverse_transform(...)` to turn the model's internal numeric class codes back into human-readable `RatingGroup` strings.
 - `get_predict_proba_output(pipeline, features, class_labels)` — calls `pipeline.predict_proba()` if the model supports it (all four estimators used here do); for each row, records the maximum class probability as the `confidence_score`, and the full per-class probability distribution as `class_probability_rows`. Defensively checks `hasattr(pipeline, "predict_proba")` first, returning `None` values gracefully for any hypothetical future estimator type that doesn't support probability output.
 - `build_prediction_rows(...)` — assembles the final, 1-indexed, per-row prediction records returned to the frontend.
@@ -1300,13 +1344,14 @@ Covered in full in §11. Listed in `requirements.txt` and imported in all four n
 
 **What Node.js is:** a JavaScript runtime built on Chrome's V8 engine, allowing JavaScript to run outside a browser (e.g., as a web server), with a non-blocking, event-driven I/O model well suited to serving many concurrent lightweight HTTP requests. **What Express is:** the most widely used minimal web framework for Node.js, providing routing, middleware, and request/response handling on top of Node's raw `http` module. **Why chosen here** (already discussed at the architectural level in §4.2): it's simple, well-documented, low-ceremony for a single-endpoint app, and does not require any additional ML-specific capability (all ML work is delegated to the Python subprocess), so its lack of a native ML ecosystem is irrelevant to the decision. **Realistic alternative — Flask or FastAPI (Python-native web frameworks):** this is the single most likely "why didn't you just..." question an examiner will ask, so have this comparison ready cold:
 
-| | Node.js + Express (this project) | Flask/FastAPI (Python-native alternative) |
-|---|---|---|
-| Language boundary | Two languages, two processes, a stdout-JSON contract to maintain (§4.3) | One language throughout — no subprocess spawning, no serialization boundary |
-| ML library access | Indirect — via subprocess only | Direct — call scikit-learn/XGBoost/joblib in-process |
-| Concurrency model | Node's async event loop (well-suited to I/O-bound serving) | Flask is traditionally synchronous (though extensible); FastAPI is natively async |
-| Complexity for this project's actual scope | Slightly higher (two runtimes to install/manage, `spawnSync` boundary) | Lower (one runtime, one dependency environment) |
-| A plausible reason to still choose Node anyway | Familiarity/preference, or an intent to build a richer frontend-adjacent Node ecosystem later, or simply that the web-serving layer and the ML layer are conceptually separable concerns kept cleanly apart | — |
+
+|                                                | Node.js + Express (this project)                                                                                                                                                                            | Flask/FastAPI (Python-native alternative)                                         |
+| ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| Language boundary                              | Two languages, two processes, a stdout-JSON contract to maintain (§4.3)                                                                                                                                    | One language throughout — no subprocess spawning, no serialization boundary      |
+| ML library access                              | Indirect — via subprocess only                                                                                                                                                                             | Direct — call scikit-learn/XGBoost/joblib in-process                             |
+| Concurrency model                              | Node's async event loop (well-suited to I/O-bound serving)                                                                                                                                                  | Flask is traditionally synchronous (though extensible); FastAPI is natively async |
+| Complexity for this project's actual scope     | Slightly higher (two runtimes to install/manage,`spawnSync` boundary)                                                                                                                                       | Lower (one runtime, one dependency environment)                                   |
+| A plausible reason to still choose Node anyway | Familiarity/preference, or an intent to build a richer frontend-adjacent Node ecosystem later, or simply that the web-serving layer and the ML layer are conceptually separable concerns kept cleanly apart | —                                                                                |
 
 **The honest, defensible answer if pushed:** *"Given the project ended up needing only a single prediction endpoint, a Python-native framework like FastAPI would have removed the cross-language subprocess boundary entirely and been architecturally simpler. I chose Node/Express [state your actual reason — familiarity, or a deliberate separation of the web-serving concern from the ML concern]; it works correctly for this project's scope, but FastAPI is a legitimate, arguably simpler alternative I'd weigh differently for a larger version of this system."* You must fill in your own actual reason here rather than have me guess it for you — this is one of the few points in this document that depends on information only you have.
 
@@ -1677,54 +1722,62 @@ This section deliberately adopts the harshest reasonable reading of your project
 Work through this before your evaluation. Each item should be something you can do without hesitation, not something you'd need to look up.
 
 ## Technical Knowledge
-- [ ] Can explain, unprompted, why 10 rating grades were grouped into 4 (§3.3, §3.6)
-- [ ] Can name and formula-explain every one of the 24 financial ratios in plain business terms (§3.4)
-- [ ] Can explain the full preprocessing pipeline step-by-step from raw upload to model input (§5.3)
-- [ ] Can explain median vs. mean imputation and why median was chosen (§5.4)
-- [ ] Can explain one-hot encoding and why it suits the unordered `Sector` feature (§5.4)
+
+- [ ]  Can explain, unprompted, why 10 rating grades were grouped into 4 (§3.3, §3.6)
+- [ ]  Can name and formula-explain every one of the 24 financial ratios in plain business terms (§3.4)
+- [ ]  Can explain the full preprocessing pipeline step-by-step from raw upload to model input (§5.3)
+- [ ]  Can explain median vs. mean imputation and why median was chosen (§5.4)
+- [ ]  Can explain one-hot encoding and why it suits the unordered `Sector` feature (§5.4)
 
 ## Machine Learning
-- [ ] Can explain the sigmoid/softmax function and Logistic Regression's linear decision boundary (§7.1)
-- [ ] Can explain Gini impurity and how decision tree splits are chosen (§7.2)
-- [ ] Can explain bagging vs. boosting with a diagram, unprompted (§8.1)
-- [ ] Can explain gradient boosting's residual-correction mechanism end to end (§8.3–8.4)
-- [ ] Can name and define at least 6 XGBoost hyperparameters without notes (§8.6)
-- [ ] Can explain the bias-variance tradeoff and place all four of this project's models on it (§8.7)
+
+- [ ]  Can explain the sigmoid/softmax function and Logistic Regression's linear decision boundary (§7.1)
+- [ ]  Can explain Gini impurity and how decision tree splits are chosen (§7.2)
+- [ ]  Can explain bagging vs. boosting with a diagram, unprompted (§8.1)
+- [ ]  Can explain gradient boosting's residual-correction mechanism end to end (§8.3–8.4)
+- [ ]  Can name and define at least 6 XGBoost hyperparameters without notes (§8.6)
+- [ ]  Can explain the bias-variance tradeoff and place all four of this project's models on it (§8.7)
 
 ## Business Understanding
-- [ ] Can explain SME credit risk and why manual assessment doesn't scale (§2.2–2.3)
-- [ ] Can state the real-world cost asymmetry between false positives and false negatives in lending (§10.11, evaluator Q2–3)
-- [ ] Can give the plain-English, non-technical explanation of the whole project in under 60 seconds (§1.6)
+
+- [ ]  Can explain SME credit risk and why manual assessment doesn't scale (§2.2–2.3)
+- [ ]  Can state the real-world cost asymmetry between false positives and false negatives in lending (§10.11, evaluator Q2–3)
+- [ ]  Can give the plain-English, non-technical explanation of the whole project in under 60 seconds (§1.6)
 
 ## Statistics and Evaluation
-- [ ] Can recite all four models' accuracy, weighted F1, and macro F1 from memory (§10.1)
-- [ ] Can explain macro vs. weighted F1 using this project's actual gap as the example (§10.6)
-- [ ] Can explain why accuracy alone misleads under class imbalance, citing the naive-baseline comparison (§6.2, §10.2)
-- [ ] Can read a confusion matrix and describe the error pattern (adjacent-bucket confusion) unprompted (§10.7)
-- [ ] Can explain precision/recall/F1 with the Distressed class as a concrete running example (§10.3–10.5)
+
+- [ ]  Can recite all four models' accuracy, weighted F1, and macro F1 from memory (§10.1)
+- [ ]  Can explain macro vs. weighted F1 using this project's actual gap as the example (§10.6)
+- [ ]  Can explain why accuracy alone misleads under class imbalance, citing the naive-baseline comparison (§6.2, §10.2)
+- [ ]  Can read a confusion matrix and describe the error pattern (adjacent-bucket confusion) unprompted (§10.7)
+- [ ]  Can explain precision/recall/F1 with the Distressed class as a concrete running example (§10.3–10.5)
 
 ## Explainability
-- [ ] Can explain Shapley values' game-theoretic origin and the four fairness axioms (§11.4)
-- [ ] Can explain the exact difference between TreeExplainer and LinearExplainer, and why each was chosen for which model (§11.4)
-- [ ] Can state clearly that SHAP exists only in the notebooks, not the live app, and why that's an honest thing to say rather than hide (§11.3)
+
+- [ ]  Can explain Shapley values' game-theoretic origin and the four fairness axioms (§11.4)
+- [ ]  Can explain the exact difference between TreeExplainer and LinearExplainer, and why each was chosen for which model (§11.4)
+- [ ]  Can state clearly that SHAP exists only in the notebooks, not the live app, and why that's an honest thing to say rather than hide (§11.3)
 
 ## Architecture and Code Quality
-- [ ] Can draw the full request lifecycle from browser upload to displayed result from memory (§4.4)
-- [ ] Can explain why `common.py` is shared between training and prediction, and name "training-serving skew" as the concept it prevents (§5.2, §12.1)
-- [ ] Can explain the Node/Python subprocess boundary and its `spawnSync` mechanics (§4.3)
-- [ ] Can justify (or honestly critique) the Node+Express vs. Flask/FastAPI architecture choice (§13.10)
+
+- [ ]  Can draw the full request lifecycle from browser upload to displayed result from memory (§4.4)
+- [ ]  Can explain why `common.py` is shared between training and prediction, and name "training-serving skew" as the concept it prevents (§5.2, §12.1)
+- [ ]  Can explain the Node/Python subprocess boundary and its `spawnSync` mechanics (§4.3)
+- [ ]  Can justify (or honestly critique) the Node+Express vs. Flask/FastAPI architecture choice (§13.10)
 
 ## Honest Self-Critique (this is what separates a distinction from a pass)
-- [ ] Can state, unprompted and without being asked "what's wrong with your project," at least three genuine weaknesses: no feature scaling, no imbalance correction, no cross-validation (§16)
-- [ ] Can explain exactly *why* Logistic Regression underperforms, using both the scaling gap and the linear-boundary limitation (§7.1, §16.1)
-- [ ] Can explain exactly why every model struggles on the Distressed class, tying it to class imbalance mechanics, not just stating "the data was imbalanced" (§6, §6.4)
-- [ ] Can propose the single highest-leverage next improvement (`class_weight="balanced"`) and explain why it's higher-leverage than SMOTE for this project's remaining time budget (§6.3, evaluator Q67)
+
+- [ ]  Can state, unprompted and without being asked "what's wrong with your project," at least three genuine weaknesses: no feature scaling, no imbalance correction, no cross-validation (§16)
+- [ ]  Can explain exactly *why* Logistic Regression underperforms, using both the scaling gap and the linear-boundary limitation (§7.1, §16.1)
+- [ ]  Can explain exactly why every model struggles on the Distressed class, tying it to class imbalance mechanics, not just stating "the data was imbalanced" (§6, §6.4)
+- [ ]  Can propose the single highest-leverage next improvement (`class_weight="balanced"`) and explain why it's higher-leverage than SMOTE for this project's remaining time budget (§6.3, evaluator Q67)
 
 ## Presentation and Delivery
-- [ ] Have rehearsed a 60-second summary, a 5-minute summary, and a "just the numbers" summary of results
-- [ ] Have a clean, working local run-through completed within the last 24 hours before your defence (verify `README.md`'s three-command run sequence still works exactly as written)
-- [ ] Have cleared clutter from `uploads/`/`outputs/` folders before anyone browses your repository (§16.3)
-- [ ] Have decided, and can state clearly, your own honest reason for choosing Node.js/Express over a Python-native framework (§13.10 — this is the one answer in this entire document only you can supply)
+
+- [ ]  Have rehearsed a 60-second summary, a 5-minute summary, and a "just the numbers" summary of results
+- [ ]  Have a clean, working local run-through completed within the last 24 hours before your defence (verify `README.md`'s three-command run sequence still works exactly as written)
+- [ ]  Have cleared clutter from `uploads/`/`outputs/` folders before anyone browses your repository (§16.3)
+- [ ]  Have decided, and can state clearly, your own honest reason for choosing Node.js/Express over a Python-native framework (§13.10 — this is the one answer in this entire document only you can supply)
 
 ---
 
