@@ -16,7 +16,7 @@
         <p class="eyebrow">Credit Risk Analysis Platform</p>
         <h1>CreditSight</h1>
         <p class="hero-copy">
-          Upload a company dataset, choose a baseline model, and review risk predictions with clear metrics.
+          Run a manual company assessment or upload a batch CSV, choose one of the trained models, and review risk predictions with clear metrics and explanations.
         </p>
       </div>
       <div class="hero-badge">
@@ -26,10 +26,50 @@
       </div>
     </section>
 
-    <section class="grid">
-      <div class="card panel">
-        <h2>Run Analysis</h2>
-        <form id="analysisForm">
+    <section class="card panel mode-card">
+      <div class="mode-switch" role="tablist" aria-label="Prediction methods">
+        <button id="manualModeTab" type="button" class="mode-tab active" data-mode-target="manualPanel" aria-controls="manualPanel" aria-selected="true">Manual Company Assessment</button>
+        <button id="batchModeTab" type="button" class="mode-tab" data-mode-target="batchPanel" aria-controls="batchPanel" aria-selected="false">Batch CSV Upload</button>
+      </div>
+
+      <div id="statusBox" class="status hidden"></div>
+
+      <div id="manualPanel" class="mode-panel">
+        <div class="mode-panel-copy">
+          <h2>Manual Company Assessment</h2>
+          <p class="section-copy">
+            Enter the company&apos;s raw financial statement values. CreditSight will calculate the 24 model features, run the selected model, and show the prediction with feature contributions.
+          </p>
+          <p class="section-note">
+            Use the same units throughout, such as millions for cash flow and revenue. Required sectors are the same as Dataset A.
+          </p>
+        </div>
+        <form id="manualForm">
+          <div id="manualFormFields" class="manual-fields"></div>
+          <label>
+            Model selection
+            <select id="manualModel" name="model" required>
+              <option value="decision_tree">Decision Tree</option>
+              <option value="random_forest">Random Forest</option>
+              <option value="logistic_regression">Logistic Regression</option>
+              <option value="xgboost">XGBoost</option>
+            </select>
+          </label>
+          <button type="submit" class="primary-button">Run Manual Assessment</button>
+        </form>
+      </div>
+
+      <div id="batchPanel" class="mode-panel hidden">
+        <div class="mode-panel-copy">
+          <h2>Batch CSV Upload</h2>
+          <p class="section-copy">
+            Upload a CSV or Excel file containing the model features. The batch flow validates the required columns, warns about unsupported extras, and returns a prediction for each row.
+          </p>
+          <p class="section-note">
+            The file should contain the exact feature column names expected by the selected model.
+          </p>
+        </div>
+        <form id="batchForm">
           <label>
             Dataset upload
             <input id="dataset" name="dataset" type="file" accept=".csv,.xlsx,.xls" required />
@@ -37,7 +77,7 @@
 
           <label>
             Model selection
-            <select id="model" name="model" required>
+            <select id="batchModel" name="model" required>
               <option value="decision_tree">Decision Tree</option>
               <option value="random_forest">Random Forest</option>
               <option value="logistic_regression">Logistic Regression</option>
@@ -45,25 +85,127 @@
             </select>
           </label>
 
-          <button type="submit" class="primary-button">Run Analysis</button>
+          <button id="batchSubmitButton" type="submit" class="primary-button">Check Compatibility</button>
         </form>
 
-        <div id="statusBox" class="status hidden"></div>
-      </div>
+        <div id="compatibilityPanel" class="compatibility-panel hidden">
+          <div class="mode-panel-copy">
+            <h3>Compatibility Report</h3>
+            <p id="compatibilityState" class="section-copy"></p>
+          </div>
+          <div id="compatibilitySummary" class="compatibility-summary"></div>
+          <div id="compatibilityReport" class="compatibility-report"></div>
 
+          <div class="compatibility-grid">
+            <div>
+              <h3>Required Features</h3>
+              <div class="table-wrap">
+                <table class="mapping-table">
+                  <thead>
+                    <tr>
+                      <th>Model Feature</th>
+                      <th>Status</th>
+                      <th>Upload Column</th>
+                      <th>Formula / Source</th>
+                    </tr>
+                  </thead>
+                  <tbody id="featureMappingTableBody"></tbody>
+                </table>
+              </div>
+            </div>
+
+            <div>
+              <h3>Raw Financial Inputs</h3>
+              <div class="table-wrap">
+                <table class="mapping-table">
+                  <thead>
+                    <tr>
+                      <th>Financial Input</th>
+                      <th>Status</th>
+                      <th>Upload Column</th>
+                    </tr>
+                  </thead>
+                  <tbody id="rawFieldMappingTableBody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <div class="compatibility-grid compatibility-grid-secondary">
+            <div>
+              <h3>Optional Identifiers</h3>
+              <div class="table-wrap">
+                <table class="mapping-table">
+                  <thead>
+                    <tr>
+                      <th>Type</th>
+                      <th>Upload Column</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody id="optionalIdentifiersTableBody"></tbody>
+                </table>
+              </div>
+            </div>
+
+            <div>
+              <h3>Unsupported Columns</h3>
+              <div id="unsupportedColumnsList" class="compatibility-list empty-state">Upload a file to see unsupported columns.</div>
+            </div>
+          </div>
+
+          <button id="runBatchButton" type="button" class="primary-button">Run Batch Prediction</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="grid">
       <div class="card panel">
-        <h2>Results</h2>
+        <h2>Prediction Summary</h2>
         <div class="result-summary">
           <div><span>Selected model</span><strong id="selectedModel">-</strong></div>
+          <div><span>Prediction mode</span><strong id="predictionMode">-</strong></div>
+          <div><span>Risk category</span><strong id="predictedRisk">-</strong></div>
+          <div><span>Confidence score</span><strong id="predictionConfidence">-</strong></div>
+          <div><span>Rows processed</span><strong id="predictionCount">-</strong></div>
           <div><span>Baseline Test Accuracy</span><strong id="accuracy">-</strong></div>
           <div><span>Baseline Test Weighted F1</span><strong id="weightedF1">-</strong></div>
           <div><span>Baseline Test Macro F1</span><strong id="macroF1">-</strong></div>
         </div>
         <p id="metricsNote" class="metrics-note">These metrics come from Dataset A's held-out test set, not the uploaded company file.</p>
 
+        <div id="warningsBox" class="warnings hidden"></div>
+
         <div class="download-row">
           <a id="downloadLink" class="secondary-button disabled" href="#" download>Download CSV</a>
         </div>
+      </div>
+
+      <div class="card panel">
+        <h2>Main Feature Contributions</h2>
+        <div id="featureContributions" class="contribution-box empty-state">Run an analysis to see the SHAP-based feature contributions.</div>
+      </div>
+    </section>
+
+    <section class="card panel">
+      <h2>Prediction Results</h2>
+      <div class="table-wrap">
+        <table id="predictionTable">
+          <thead>
+            <tr>
+              <th>Row</th>
+              <th>Company</th>
+              <th>Predicted RatingGroup</th>
+              <th>Confidence Score</th>
+              <th>Top Feature Contributions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td colspan="5" class="empty-state">Run an analysis to see prediction rows.</td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </section>
 
@@ -75,26 +217,6 @@
     <section class="card panel">
       <h2>Classification Report</h2>
       <pre id="classificationReport" class="report-box empty-state">Run an analysis to see the report.</pre>
-    </section>
-
-    <section class="card panel">
-      <h2>Predicted RatingGroup For Each Row</h2>
-      <div class="table-wrap">
-        <table id="predictionTable">
-          <thead>
-            <tr>
-              <th>Row</th>
-              <th>Predicted RatingGroup</th>
-              <th>Confidence Score</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td colspan="3" class="empty-state">Run an analysis to see row-level predictions.</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
     </section>
 
     <section class="card panel disclaimer-card">

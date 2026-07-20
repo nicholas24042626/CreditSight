@@ -1,6 +1,6 @@
 {
-  "trained_at": "2026-07-13T05:08:51.198911Z",
-  "source_data": "C:\\Users\\24042626\\Downloads\\DFT Y3 (1)\\C300 FYP\\New Code\\uploads\\1783919316330_set A corporate_rating.csv",
+  "trained_at": "2026-07-20T13:48:33.518223Z",
+  "source_data": "data\\set A corporate_rating.csv",
   "target_column": null,
   "dataset_summary": {
     "rows_before_cleaning": 2029,
@@ -111,65 +111,65 @@
       "model_display_name": "Decision Tree",
       "model_path": "models\\decision_tree.joblib",
       "metrics": {
-        "accuracy": 0.5500821018062397,
-        "weighted_f1": 0.5497741573021249,
-        "macro_f1": 0.4964052805923087
+        "accuracy": 0.555008210180624,
+        "weighted_f1": 0.5512237094956959,
+        "macro_f1": 0.4620144959309919
       },
       "confusion_matrix": [
         [
-          86,
-          34,
-          27,
+          84,
+          43,
+          20,
           1
         ],
         [
-          52,
-          97,
-          52,
+          45,
+          96,
+          60,
           0
         ],
         [
-          27,
-          53,
-          145,
-          13
+          23,
+          50,
+          155,
+          10
         ],
         [
+          2,
           3,
-          4,
-          8,
-          7
+          14,
+          3
         ]
       ],
-      "classification_report_text": "                 precision    recall  f1-score   support\n\nInvestment-High       0.51      0.58      0.54       148\n Investment-Low       0.52      0.48      0.50       201\n    Speculative       0.62      0.61      0.62       238\n     Distressed       0.33      0.32      0.33        22\n\n       accuracy                           0.55       609\n      macro avg       0.50      0.50      0.50       609\n   weighted avg       0.55      0.55      0.55       609\n"
+      "classification_report_text": "                 precision    recall  f1-score   support\n\nInvestment-High       0.55      0.57      0.56       148\n Investment-Low       0.50      0.48      0.49       201\n    Speculative       0.62      0.65      0.64       238\n     Distressed       0.21      0.14      0.17        22\n\n       accuracy                           0.56       609\n      macro avg       0.47      0.46      0.46       609\n   weighted avg       0.55      0.56      0.55       609\n"
     },
     {
       "model_name": "random_forest",
       "model_display_name": "Random Forest",
       "model_path": "models\\random_forest.joblib",
       "metrics": {
-        "accuracy": 0.6830870279146142,
-        "weighted_f1": 0.670541780389565,
-        "macro_f1": 0.5522458460327687
+        "accuracy": 0.6847290640394089,
+        "weighted_f1": 0.6735457328692898,
+        "macro_f1": 0.5549297078600917
       },
       "confusion_matrix": [
         [
           99,
-          37,
+          35,
+          14,
+          0
+        ],
+        [
+          35,
+          121,
+          45,
+          0
+        ],
+        [
           12,
-          0
-        ],
-        [
-          38,
-          116,
-          47,
-          0
-        ],
-        [
-          19,
-          20,
-          199,
-          0
+          30,
+          195,
+          1
         ],
         [
           1,
@@ -178,81 +178,81 @@
           2
         ]
       ],
-      "classification_report_text": "                 precision    recall  f1-score   support\n\nInvestment-High       0.63      0.67      0.65       148\n Investment-Low       0.67      0.58      0.62       201\n    Speculative       0.72      0.84      0.77       238\n     Distressed       1.00      0.09      0.17        22\n\n       accuracy                           0.68       609\n      macro avg       0.75      0.54      0.55       609\n   weighted avg       0.69      0.68      0.67       609\n"
+      "classification_report_text": "                 precision    recall  f1-score   support\n\nInvestment-High       0.67      0.67      0.67       148\n Investment-Low       0.65      0.60      0.63       201\n    Speculative       0.71      0.82      0.76       238\n     Distressed       0.67      0.09      0.16        22\n\n       accuracy                           0.68       609\n      macro avg       0.68      0.55      0.55       609\n   weighted avg       0.68      0.68      0.67       609\n"
     },
     {
       "model_name": "logistic_regression",
       "model_display_name": "Logistic Regression",
       "model_path": "models\\logistic_regression.joblib",
       "metrics": {
-        "accuracy": 0.3727422003284072,
-        "weighted_f1": 0.24216557305543718,
-        "macro_f1": 0.16038569956260085
+        "accuracy": 0.4794745484400657,
+        "weighted_f1": 0.46167682427557877,
+        "macro_f1": 0.3798572157062723
       },
       "confusion_matrix": [
         [
-          2,
-          6,
-          140,
+          51,
+          50,
+          47,
           0
         ],
         [
-          2,
-          9,
-          190,
+          37,
+          71,
+          93,
           0
         ],
         [
-          2,
-          13,
-          216,
-          7
+          20,
+          46,
+          168,
+          4
         ],
         [
-          0,
           3,
-          19,
-          0
+          3,
+          14,
+          2
         ]
       ],
-      "classification_report_text": "                 precision    recall  f1-score   support\n\nInvestment-High       0.33      0.01      0.03       148\n Investment-Low       0.29      0.04      0.08       201\n    Speculative       0.38      0.91      0.54       238\n     Distressed       0.00      0.00      0.00        22\n\n       accuracy                           0.37       609\n      macro avg       0.25      0.24      0.16       609\n   weighted avg       0.33      0.37      0.24       609\n"
+      "classification_report_text": "                 precision    recall  f1-score   support\n\nInvestment-High       0.46      0.34      0.39       148\n Investment-Low       0.42      0.35      0.38       201\n    Speculative       0.52      0.71      0.60       238\n     Distressed       0.33      0.09      0.14        22\n\n       accuracy                           0.48       609\n      macro avg       0.43      0.37      0.38       609\n   weighted avg       0.47      0.48      0.46       609\n"
     },
     {
       "model_name": "xgboost",
       "model_display_name": "XGBoost",
       "model_path": "models\\xgboost.joblib",
       "metrics": {
-        "accuracy": 0.6814449917898193,
-        "weighted_f1": 0.6709120875339375,
-        "macro_f1": 0.5669381257042874
+        "accuracy": 0.6896551724137931,
+        "weighted_f1": 0.6818813363482905,
+        "macro_f1": 0.6022999476536617
       },
       "confusion_matrix": [
         [
-          97,
+          98,
+          36,
+          14,
+          0
+        ],
+        [
           35,
-          16,
+          119,
+          47,
           0
         ],
         [
-          32,
-          117,
-          52,
-          0
-        ],
-        [
-          11,
-          27,
+          8,
+          30,
           198,
           2
         ],
         [
           1,
-          1,
-          17,
-          3
+          0,
+          16,
+          5
         ]
       ],
-      "classification_report_text": "                 precision    recall  f1-score   support\n\nInvestment-High       0.69      0.66      0.67       148\n Investment-Low       0.65      0.58      0.61       201\n    Speculative       0.70      0.83      0.76       238\n     Distressed       0.60      0.14      0.22        22\n\n       accuracy                           0.68       609\n      macro avg       0.66      0.55      0.57       609\n   weighted avg       0.68      0.68      0.67       609\n"
+      "classification_report_text": "                 precision    recall  f1-score   support\n\nInvestment-High       0.69      0.66      0.68       148\n Investment-Low       0.64      0.59      0.62       201\n    Speculative       0.72      0.83      0.77       238\n     Distressed       0.71      0.23      0.34        22\n\n       accuracy                           0.69       609\n      macro avg       0.69      0.58      0.60       609\n   weighted avg       0.69      0.69      0.68       609\n"
     }
   ]
 }

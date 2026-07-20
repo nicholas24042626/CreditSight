@@ -116,11 +116,12 @@ def train_single_model(
     target_column: str,
     dataset_summary: dict,
     output_dir: Path,
+    scale_numeric: bool = False,
 ):
     # This section builds and trains one model at a time.
     pipeline = Pipeline(
         steps=[
-            ("preprocessor", build_preprocessor(numeric_columns, categorical_columns)),
+            ("preprocessor", build_preprocessor(numeric_columns, categorical_columns, scale_numeric=scale_numeric)),
             ("model", estimator),
         ]
     )
@@ -142,6 +143,7 @@ def train_single_model(
         dataset_summary=dataset_summary,
         metrics=metrics,
     )
+    artifact["shap_reference_rows"] = X_train.head(100).to_dict(orient="records")
 
     model_path = output_dir / f"{model_name}.joblib"
     save_artifact(artifact, str(model_path))
@@ -190,18 +192,62 @@ def main() -> None:
     )
 
     models = {
-        "decision_tree": DecisionTreeClassifier(random_state=42),
-        "random_forest": RandomForestClassifier(random_state=42),
-        "logistic_regression": LogisticRegression(random_state=42, max_iter=2000),
-        "xgboost": XGBClassifier(random_state=42, eval_metric="mlogloss"),
+        "decision_tree": {
+            "estimator": DecisionTreeClassifier(
+                random_state=42,
+                criterion="entropy",
+                max_depth=None,
+                min_samples_split=2,
+                min_samples_leaf=1,
+            ),
+            "scale_numeric": True,
+        },
+        "random_forest": {
+            "estimator": RandomForestClassifier(
+                random_state=42,
+                n_estimators=200,
+                max_depth=20,
+                max_features="log2",
+                min_samples_split=2,
+                min_samples_leaf=1,
+            ),
+            "scale_numeric": True,
+        },
+        "logistic_regression": {
+            "estimator": LogisticRegression(
+                random_state=42,
+                max_iter=2000,
+                C=100.0,
+                class_weight=None,
+                penalty="l2",
+                solver="lbfgs",
+            ),
+            "scale_numeric": True,
+        },
+        "xgboost": {
+            "estimator": XGBClassifier(
+                random_state=42,
+                eval_metric="mlogloss",
+                n_estimators=200,
+                max_depth=5,
+                min_child_weight=1,
+                learning_rate=0.1,
+                subsample=0.8,
+                colsample_bytree=0.8,
+                reg_alpha=0.1,
+                reg_lambda=2.0,
+                gamma=0.1,
+            ),
+            "scale_numeric": False,
+        },
     }
 
     results = []
-    for model_name, estimator in models.items():
+    for model_name, model_spec in models.items():
         results.append(
             train_single_model(
                 model_name=model_name,
-                estimator=estimator,
+                estimator=model_spec["estimator"],
                 X_train=X_train,
                 X_test=X_test,
                 y_train_encoded=y_train,
@@ -213,6 +259,7 @@ def main() -> None:
                 target_column="RatingGroup",
                 dataset_summary=summary,
                 output_dir=output_dir,
+                scale_numeric=model_spec["scale_numeric"],
             )
         )
 
