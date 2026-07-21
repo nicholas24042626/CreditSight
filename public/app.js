@@ -16,6 +16,15 @@ const weightedF1 = document.getElementById("weightedF1");
 const macroF1 = document.getElementById("macroF1");
 const modelParametersBox = document.getElementById("modelParametersBox");
 const modelParameters = document.getElementById("modelParameters");
+const overallRiskSummary = document.getElementById("overallRiskSummary");
+const overallRiskSearch = document.getElementById("overallRiskSearch");
+const retrainForm = document.getElementById("retrainForm");
+const retrainDataset = document.getElementById("retrainDataset");
+const targetColumnInput = document.getElementById("targetColumn");
+const retrainSubmitButton = document.getElementById("retrainSubmitButton");
+const retrainStatus = document.getElementById("retrainStatus");
+const trainingResultsPanel = document.getElementById("trainingResultsPanel");
+const trainingResultsBody = document.getElementById("trainingResultsBody");
 const confusionMatrix = document.getElementById("confusionMatrix");
 const classificationReport = document.getElementById("classificationReport");
 const predictionTable = document.getElementById("predictionTable");
@@ -102,6 +111,20 @@ const MANUAL_FIELD_SECTIONS = [
 
 let currentPredictions = [];
 let currentCompatibility = null;
+let currentTrainingSummary = null;
+let currentOverallRiskAggregates = [];
+let currentOverallRiskQuery = "";
+const CREDIT_RISK_ORDER = ["Investment-High", "Investment-Low", "Speculative", "Distressed"];
+
+function getOverallCategoryClass(category) {
+  if (category === "Distressed") {
+    return "overall-category distressed";
+  }
+  if (category === "Speculative") {
+    return "overall-category speculative";
+  }
+  return "overall-category investment";
+}
 
 function escapeHtml(value) {
   return String(value)
@@ -134,7 +157,14 @@ function clearResults() {
   macroF1.textContent = "-";
   modelParametersBox.classList.add("hidden");
   modelParameters.innerHTML = "";
-  metricsNote.textContent = "These metrics come from Dataset A's held-out test set, not the uploaded company file.";
+  currentOverallRiskAggregates = [];
+  currentOverallRiskQuery = "";
+  if (overallRiskSearch) {
+    overallRiskSearch.value = "";
+  }
+  overallRiskSummary.className = "overall-risk-summary empty-state";
+  overallRiskSummary.innerHTML = "Run an analysis to see company-level credit risk categories.";
+  metricsNote.textContent = "These metrics come from the most recent retraining run, not the uploaded company file.";
   warningsBox.className = "warnings hidden";
   warningsBox.innerHTML = "";
   featureContributions.className = "contribution-box empty-state";
@@ -149,6 +179,17 @@ function clearResults() {
   if (runBatchButton) {
     runBatchButton.disabled = true;
   }
+}
+
+function showRetrainStatus(message, type) {
+  retrainStatus.className = `status ${type}`;
+  retrainStatus.textContent = message;
+  retrainStatus.classList.remove("hidden");
+}
+
+function clearRetrainStatus() {
+  retrainStatus.className = "status hidden";
+  retrainStatus.textContent = "";
 }
 
 function formatPercent(value) {
@@ -188,6 +229,141 @@ function renderWarnings(warnings) {
   warningsBox.innerHTML = `<strong>Warnings</strong><ul>${warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join("")}</ul>`;
 }
 
+function getCompanyKey(row, fallbackIndex) {
+  const companyName = String(row.company_name || "").trim();
+  if (companyName) {
+    return companyName;
+  }
+  return `Row ${fallbackIndex}`;
+}
+
+function aggregatePredictionsByCompany(rows) {
+  const groups = new Map();
+  (rows || []).forEach((row, index) => {
+    const companyKey = getCompanyKey(row, index + 1);
+    if (!groups.has(companyKey)) {
+      groups.set(companyKey, {
+        company_name: companyKey,
+        total_records: 0,
+        confidence_sum: 0,
+        category_counts: Object.fromEntries(CREDIT_RISK_ORDER.map((category) => [category, 0]))
+      });
+    }
+
+    const group = groups.get(companyKey);
+    const category = row.predicted_rating_group || "Unknown";
+    group.total_records += 1;
+    group.confidence_sum += Number(row.confidence_score || 0);
+    if (!(category in group.category_counts)) {
+      group.category_counts[category] = 0;
+    }
+    group.category_counts[category] += 1;
+  });
+
+  return Array.from(groups.values()).map((group) => {
+    let overall_category = CREDIT_RISK_ORDER[0];
+    let best_count = -1;
+    for (const category of CREDIT_RISK_ORDER) {
+      const count = group.category_counts[category] || 0;
+      if (count > best_count) {
+        best_count = count;
+        overall_category = category;
+      }
+    }
+
+    return {
+      ...group,
+      overall_category,
+      average_confidence: group.total_records > 0 ? group.confidence_sum / group.total_records : 0
+    };
+  });
+}
+
+function renderOverallRiskSummary(rows) {
+  currentOverallRiskAggregates = aggregatePredictionsByCompany(rows);
+  renderOverallRiskSummaryTable();
+}
+
+function renderOverallRiskSummaryTable() {
+  const query = currentOverallRiskQuery.trim().toLowerCase();
+  const aggregates = query
+    ? currentOverallRiskAggregates.filter((group) => group.company_name.toLowerCase().includes(query))
+    : currentOverallRiskAggregates;
+
+  if (!currentOverallRiskAggregates.length) {
+    overallRiskSummary.className = "overall-risk-summary empty-state";
+    overallRiskSummary.innerHTML = "Run an analysis to see company-level credit risk categories.";
+    return;
+  }
+
+  if (!aggregates.length) {
+    overallRiskSummary.className = "overall-risk-summary empty-state";
+    overallRiskSummary.innerHTML = "No companies match the current search.";
+    return;
+  }
+
+  const header = `
+    <tr>
+      <th>Company</th>
+      <th>Total Records</th>
+      <th>Investment-High</th>
+      <th>Investment-Low</th>
+      <th>Speculative</th>
+      <th>Distressed</th>
+      <th>Average Confidence</th>
+      <th>Overall Category</th>
+    </tr>`;
+
+  const rowsHtml = aggregates
+    .map((group) => `
+      <tr>
+        <td>${escapeHtml(group.company_name)}</td>
+        <td>${group.total_records}</td>
+        <td>${group.category_counts["Investment-High"] || 0}</td>
+        <td>${group.category_counts["Investment-Low"] || 0}</td>
+        <td>${group.category_counts["Speculative"] || 0}</td>
+        <td>${group.category_counts["Distressed"] || 0}</td>
+        <td>${formatConfidence(group.average_confidence)}</td>
+        <td><span class="${getOverallCategoryClass(group.overall_category)}">${escapeHtml(group.overall_category)}</span></td>
+      </tr>`)
+    .join("");
+
+  overallRiskSummary.className = "overall-risk-summary";
+  overallRiskSummary.innerHTML = `
+    <div class="overall-risk-meta">
+      <strong>${aggregates.length}</strong>
+      <span>company groups found</span>
+    </div>
+    <div class="table-wrap">
+      <table class="overall-risk-table">
+        <thead>${header}</thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function formatModelParameters(params) {
+  const entries = Object.entries(params || {});
+  if (!entries.length) {
+    return "-";
+  }
+
+  const priority = ["n_estimators", "max_depth", "learning_rate", "subsample", "colsample_bytree"];
+  const ordered = priority
+    .filter((key) => key in params)
+    .map((key) => `${key}=${params[key]}`);
+
+  if (ordered.length) {
+    return ordered.join(", ");
+  }
+
+  return entries
+    .slice(0, 4)
+    .map(([key, value]) => `${key}=${value}`)
+    .join(", ");
+}
+
 function renderModelParameters(payload) {
   const parameters = payload.model_parameters || {};
   const entries = Object.entries(parameters);
@@ -218,6 +394,32 @@ function renderModelParameters(payload) {
     .join("");
 
   modelParametersBox.classList.remove("hidden");
+}
+
+function renderTrainingResults(summary) {
+  currentTrainingSummary = summary;
+  const models = summary?.models || [];
+  if (!models.length) {
+    trainingResultsPanel.classList.add("hidden");
+    trainingResultsBody.innerHTML = "";
+    return;
+  }
+
+  trainingResultsBody.innerHTML = models
+    .map((model) => {
+      const metrics = model.metrics || {};
+      return `
+        <tr>
+          <td>${escapeHtml(model.model_display_name || model.model_name || "-")}</td>
+          <td>${formatPercent(metrics.accuracy)}</td>
+          <td>${formatPercent(metrics.weighted_f1)}</td>
+          <td>${formatPercent(metrics.macro_f1)}</td>
+          <td>${escapeHtml(formatModelParameters(model.model_parameters))}</td>
+        </tr>`;
+    })
+    .join("");
+
+  trainingResultsPanel.classList.remove("hidden");
 }
 
 function setCompatibilityVisible(isVisible) {
@@ -498,6 +700,11 @@ function setLoadingState(isLoading, submitButton) {
   batchForm.querySelectorAll("button, input, select").forEach((element) => {
     element.disabled = isLoading && element !== submitButton;
   });
+  if (retrainForm) {
+    retrainForm.querySelectorAll("button, input, select").forEach((element) => {
+      element.disabled = isLoading && element !== submitButton;
+    });
+  }
   if (runBatchButton) {
     runBatchButton.disabled = isLoading || !(currentCompatibility && currentCompatibility.compatible);
   }
@@ -522,10 +729,10 @@ async function submitManualAssessment(event) {
   clearStatus();
 
   const submitButton = manualForm.querySelector("button[type='submit']");
-  setLoadingState(true, submitButton);
   try {
     const payload = collectManualPayload();
     payload.model = manualModelSelect.value;
+    setLoadingState(true, submitButton);
 
     showStatus("Running manual assessment. Please wait...", "success");
 
@@ -547,6 +754,48 @@ async function submitManualAssessment(event) {
     showStatus("Manual assessment completed.", "success");
   } catch (error) {
     showStatus(error.message, "error");
+  } finally {
+    setLoadingState(false, submitButton);
+  }
+}
+
+async function submitRetrainRequest(event) {
+  event.preventDefault();
+  clearStatus();
+  clearRetrainStatus();
+
+  if (!retrainDataset.files.length) {
+    showRetrainStatus("Please upload a labeled training dataset first.", "error");
+    return;
+  }
+
+  const submitButton = retrainSubmitButton;
+  try {
+    const formData = new FormData();
+    formData.append("dataset", retrainDataset.files[0]);
+    const targetColumnValue = String(targetColumnInput.value || "").trim();
+    if (targetColumnValue) {
+      formData.append("target_column", targetColumnValue);
+    }
+
+    setLoadingState(true, submitButton);
+    showRetrainStatus("Retraining models. Please wait...", "success");
+
+    const response = await fetch("/api/retrain", {
+      method: "POST",
+      body: formData
+    });
+
+    const responsePayload = await response.json();
+    if (!response.ok) {
+      const detailText = responsePayload.details ? ` ${typeof responsePayload.details === "string" ? responsePayload.details : JSON.stringify(responsePayload.details)}` : "";
+      throw new Error(`${responsePayload.error || "Retraining failed."}${detailText}`);
+    }
+
+    renderTrainingResults(responsePayload);
+    showRetrainStatus("Retraining completed. The saved models and metrics have been updated.", "success");
+  } catch (error) {
+    showRetrainStatus(error.message, "error");
   } finally {
     setLoadingState(false, submitButton);
   }
@@ -641,9 +890,10 @@ function renderResponse(payload) {
   weightedF1.textContent = formatPercent(payload.metrics?.baseline_test_weighted_f1);
   macroF1.textContent = formatPercent(payload.metrics?.baseline_test_macro_f1);
   renderModelParameters(payload);
-  metricsNote.textContent = payload.metrics_note || metricsNote.textContent;
+  metricsNote.textContent = payload.metrics_note || "These metrics come from the most recent retraining run, not the uploaded company file.";
   renderConfusionMatrix(payload.confusion_matrix, payload.class_labels || []);
   classificationReport.textContent = payload.classification_report_text || "Unavailable";
+  renderOverallRiskSummary(payload.predictions || []);
   renderPredictionRows(payload.predictions || []);
   renderWarnings(payload.warnings || []);
 
@@ -669,6 +919,11 @@ function renderResponse(payload) {
 
 manualModeTab.addEventListener("click", () => setMode("manual"));
 batchModeTab.addEventListener("click", () => setMode("batch"));
+overallRiskSearch.addEventListener("input", () => {
+  currentOverallRiskQuery = overallRiskSearch.value || "";
+  renderOverallRiskSummaryTable();
+});
+retrainForm.addEventListener("submit", submitRetrainRequest);
 manualForm.addEventListener("submit", submitManualAssessment);
 batchForm.addEventListener("submit", checkBatchCompatibility);
 runBatchButton.addEventListener("click", runBatchPrediction);
@@ -686,3 +941,4 @@ batchModelSelect.addEventListener("change", () => {
 populateManualForm();
 setMode("manual");
 clearResults();
+clearRetrainStatus();

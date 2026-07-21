@@ -16,13 +16,58 @@
         <p class="eyebrow">Credit Risk Analysis Platform</p>
         <h1>CreditSight</h1>
         <p class="hero-copy">
-          Run a manual company assessment or upload a batch CSV, choose one of the trained models, and review risk predictions with clear metrics and explanations.
+          Retrain the four credit-risk models on a labeled dataset, then run manual assessments or batch predictions with the updated models and metrics.
         </p>
       </div>
       <div class="hero-badge">
-        <span>Bright</span>
-        <span>Professional</span>
-        <span>Fast</span>
+        <span>Retrain</span>
+        <span>Predict</span>
+        <span>Explain</span>
+      </div>
+    </section>
+
+    <section class="card panel retrain-card">
+      <div class="mode-panel-copy">
+        <h2>Retrain Models</h2>
+        <p class="section-copy">
+          Upload a labeled dataset, and CreditSight will retrain Decision Tree, Random Forest, Logistic Regression, and XGBoost on that data. The latest metrics will replace the previous saved models.
+        </p>
+        <p class="section-note">
+          The file must include the rating column. If it is not named `Rating`, enter the target column name below.
+        </p>
+      </div>
+      <form id="retrainForm" class="retrain-form">
+        <label>
+          Training dataset
+          <input id="retrainDataset" name="dataset" type="file" accept=".csv,.xlsx,.xls" required />
+        </label>
+
+        <label>
+          Target column name
+          <input id="targetColumn" name="target_column" type="text" placeholder="Rating" />
+        </label>
+
+        <button id="retrainSubmitButton" type="submit" class="primary-button">Retrain All Models</button>
+      </form>
+
+      <div id="retrainStatus" class="status hidden"></div>
+
+      <div id="trainingResultsPanel" class="training-results hidden">
+        <h3>Latest Training Results</h3>
+        <div class="table-wrap">
+          <table class="training-table">
+            <thead>
+              <tr>
+                <th>Model</th>
+                <th>Accuracy</th>
+                <th>Weighted F1</th>
+                <th>Macro F1</th>
+                <th>Key Parameters</th>
+              </tr>
+            </thead>
+            <tbody id="trainingResultsBody"></tbody>
+          </table>
+        </div>
       </div>
     </section>
 
@@ -168,15 +213,15 @@
           <div><span>Risk category</span><strong id="predictedRisk">-</strong></div>
           <div><span>Confidence score</span><strong id="predictionConfidence">-</strong></div>
           <div><span>Rows processed</span><strong id="predictionCount">-</strong></div>
-          <div><span>Baseline Test Accuracy</span><strong id="accuracy">-</strong></div>
-          <div><span>Baseline Test Weighted F1</span><strong id="weightedF1">-</strong></div>
-          <div><span>Baseline Test Macro F1</span><strong id="macroF1">-</strong></div>
+          <div><span>Current Test Accuracy</span><strong id="accuracy">-</strong></div>
+          <div><span>Current Test Weighted F1</span><strong id="weightedF1">-</strong></div>
+          <div><span>Current Test Macro F1</span><strong id="macroF1">-</strong></div>
         </div>
         <div id="modelParametersBox" class="model-parameters hidden">
           <h3>Active Model Settings</h3>
           <div id="modelParameters" class="model-parameters-list"></div>
         </div>
-        <p id="metricsNote" class="metrics-note">These metrics come from Dataset A's held-out test set, not the uploaded company file.</p>
+        <p id="metricsNote" class="metrics-note">These metrics come from the most recent retraining run, not the uploaded company file.</p>
 
         <div id="warningsBox" class="warnings hidden"></div>
 
@@ -197,6 +242,20 @@
         </div>
         <div id="featureContributions" class="contribution-box empty-state">Run an analysis to see the SHAP explanation.</div>
       </div>
+    </section>
+
+    <section class="card panel">
+      <h2>Overall Credit Risk Category</h2>
+      <p class="section-copy">
+        Predictions are grouped by company name. The overall category is the class that appears most often for each company.
+      </p>
+      <div class="overall-risk-toolbar">
+        <label class="overall-risk-search">
+          <span>Search companies</span>
+          <input id="overallRiskSearch" type="search" placeholder="Type a company name..." autocomplete="off" />
+        </label>
+      </div>
+      <div id="overallRiskSummary" class="overall-risk-summary empty-state">Run an analysis to see company-level credit risk categories.</div>
     </section>
 
     <section class="card panel">

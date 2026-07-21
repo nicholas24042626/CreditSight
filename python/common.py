@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 from pathlib import Path
@@ -720,6 +721,22 @@ def build_model_artifact(
         "metrics": metrics,
         "model_parameters": model_parameters or {},
     }
+
+
+def sanitize_json_value(value):
+    if isinstance(value, dict):
+        return {str(key): sanitize_json_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [sanitize_json_value(item) for item in value]
+    if isinstance(value, tuple):
+        return [sanitize_json_value(item) for item in value]
+    if isinstance(value, np.generic):
+        return sanitize_json_value(value.item())
+    if isinstance(value, float):
+        if math.isnan(value) or math.isinf(value):
+            return None
+        return value
+    return value
 
 
 def save_artifact(artifact: Dict[str, object], file_path: str) -> None:
