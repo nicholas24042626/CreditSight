@@ -703,6 +703,7 @@ def build_model_artifact(
     target_column: str,
     dataset_summary: Dict[str, object],
     metrics: Dict[str, object],
+    model_parameters: Dict[str, object] | None = None,
 ):
     return {
         "model_name": model_name,
@@ -717,6 +718,7 @@ def build_model_artifact(
         "encoder_class_labels": list(label_encoder.classes_),
         "dataset_summary": dataset_summary,
         "metrics": metrics,
+        "model_parameters": model_parameters or {},
     }
 
 

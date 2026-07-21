@@ -172,6 +172,10 @@
           <div><span>Baseline Test Weighted F1</span><strong id="weightedF1">-</strong></div>
           <div><span>Baseline Test Macro F1</span><strong id="macroF1">-</strong></div>
         </div>
+        <div id="modelParametersBox" class="model-parameters hidden">
+          <h3>Active Model Settings</h3>
+          <div id="modelParameters" class="model-parameters-list"></div>
+        </div>
         <p id="metricsNote" class="metrics-note">These metrics come from Dataset A's held-out test set, not the uploaded company file.</p>
 
         <div id="warningsBox" class="warnings hidden"></div>
@@ -182,8 +186,16 @@
       </div>
 
       <div class="card panel">
-        <h2>Main Feature Contributions</h2>
-        <div id="featureContributions" class="contribution-box empty-state">Run an analysis to see the SHAP-based feature contributions.</div>
+        <h2>SHAP Explanation</h2>
+        <p class="section-copy shap-intro">
+          SHAP shows which inputs mattered most for this prediction. Positive values push the model toward the selected rating, while negative values push it away.
+        </p>
+        <div class="shap-legend" aria-label="How to read SHAP results">
+          <span class="shap-pill positive">Pushes toward the rating</span>
+          <span class="shap-pill negative">Pushes away from the rating</span>
+          <span class="shap-pill neutral">Longer bar means stronger influence</span>
+        </div>
+        <div id="featureContributions" class="contribution-box empty-state">Run an analysis to see the SHAP explanation.</div>
       </div>
     </section>
 

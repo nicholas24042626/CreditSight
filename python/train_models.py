@@ -142,6 +142,7 @@ def train_single_model(
         target_column=target_column,
         dataset_summary=dataset_summary,
         metrics=metrics,
+        model_parameters=estimator.get_params(deep=False),
     )
     artifact["shap_reference_rows"] = X_train.head(100).to_dict(orient="records")
 
@@ -230,13 +231,9 @@ def main() -> None:
                 eval_metric="mlogloss",
                 n_estimators=200,
                 max_depth=5,
-                min_child_weight=1,
                 learning_rate=0.1,
                 subsample=0.8,
-                colsample_bytree=0.8,
-                reg_alpha=0.1,
-                reg_lambda=2.0,
-                gamma=0.1,
+                colsample_bytree=1.0,
             ),
             "scale_numeric": False,
         },

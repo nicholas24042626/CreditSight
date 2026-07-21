@@ -321,8 +321,41 @@ def format_contributions_text(contributions: list[dict[str, object]] | None) -> 
     parts = []
     for item in contributions:
         shap_value = float(item["shap_value"])
-        parts.append(f"{item['feature']}: {shap_value:+.4f}")
+        direction = "pushes toward" if shap_value >= 0 else "pushes away from"
+        parts.append(f"{item['feature']} {direction} the prediction ({shap_value:+.4f})")
     return "; ".join(parts)
+
+
+def summarize_model_parameters(model_key: str, artifact: dict[str, object]) -> dict[str, object]:
+    parameters = artifact.get("model_parameters")
+    if not isinstance(parameters, dict):
+        parameters = {}
+
+    if model_key == "xgboost":
+        preferred_keys = [
+            "n_estimators",
+            "max_depth",
+            "learning_rate",
+            "subsample",
+            "colsample_bytree",
+            "random_state",
+            "eval_metric",
+        ]
+        filtered = {key: parameters[key] for key in preferred_keys if key in parameters}
+        if filtered:
+            return filtered
+
+        return {
+            "n_estimators": 200,
+            "max_depth": 5,
+            "learning_rate": 0.1,
+            "subsample": 0.8,
+            "colsample_bytree": 0.8,
+            "random_state": 42,
+            "eval_metric": "mlogloss",
+        }
+
+    return parameters
 
 
 def build_prediction_rows(
@@ -467,6 +500,7 @@ def main() -> None:
         payload = {
             "model_name": model_key,
             "model_display_name": artifact.get("model_display_name", MODEL_NAME_MAP.get(model_key, model_key)),
+            "model_parameters": summarize_model_parameters(model_key, artifact),
             "prediction_mode": prediction_mode,
             "compatibility_report": compatibility,
             "metrics": {

@@ -1,5 +1,5 @@
 {
-  "trained_at": "2026-07-20T13:48:33.518223Z",
+  "trained_at": "2026-07-21T07:37:39.458259Z",
   "source_data": "data\\set A corporate_rating.csv",
   "target_column": null,
   "dataset_summary": {
@@ -222,26 +222,26 @@
       "model_display_name": "XGBoost",
       "model_path": "models\\xgboost.joblib",
       "metrics": {
-        "accuracy": 0.6896551724137931,
-        "weighted_f1": 0.6818813363482905,
-        "macro_f1": 0.6022999476536617
+        "accuracy": 0.6912972085385879,
+        "weighted_f1": 0.6833321202684962,
+        "macro_f1": 0.6032286008626713
       },
       "confusion_matrix": [
         [
-          98,
-          36,
+          99,
+          35,
           14,
           0
         ],
         [
-          35,
+          33,
           119,
-          47,
+          49,
           0
         ],
         [
-          8,
-          30,
+          14,
+          24,
           198,
           2
         ],
@@ -252,7 +252,7 @@
           5
         ]
       ],
-      "classification_report_text": "                 precision    recall  f1-score   support\n\nInvestment-High       0.69      0.66      0.68       148\n Investment-Low       0.64      0.59      0.62       201\n    Speculative       0.72      0.83      0.77       238\n     Distressed       0.71      0.23      0.34        22\n\n       accuracy                           0.69       609\n      macro avg       0.69      0.58      0.60       609\n   weighted avg       0.69      0.69      0.68       609\n"
+      "classification_report_text": "                 precision    recall  f1-score   support\n\nInvestment-High       0.67      0.67      0.67       148\n Investment-Low       0.67      0.59      0.63       201\n    Speculative       0.71      0.83      0.77       238\n     Distressed       0.71      0.23      0.34        22\n\n       accuracy                           0.69       609\n      macro avg       0.69      0.58      0.60       609\n   weighted avg       0.69      0.69      0.68       609\n"
     }
   ]
 }

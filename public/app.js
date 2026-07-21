@@ -14,6 +14,8 @@ const predictionCount = document.getElementById("predictionCount");
 const accuracy = document.getElementById("accuracy");
 const weightedF1 = document.getElementById("weightedF1");
 const macroF1 = document.getElementById("macroF1");
+const modelParametersBox = document.getElementById("modelParametersBox");
+const modelParameters = document.getElementById("modelParameters");
 const confusionMatrix = document.getElementById("confusionMatrix");
 const classificationReport = document.getElementById("classificationReport");
 const predictionTable = document.getElementById("predictionTable");
@@ -130,11 +132,13 @@ function clearResults() {
   accuracy.textContent = "-";
   weightedF1.textContent = "-";
   macroF1.textContent = "-";
+  modelParametersBox.classList.add("hidden");
+  modelParameters.innerHTML = "";
   metricsNote.textContent = "These metrics come from Dataset A's held-out test set, not the uploaded company file.";
   warningsBox.className = "warnings hidden";
   warningsBox.innerHTML = "";
   featureContributions.className = "contribution-box empty-state";
-  featureContributions.textContent = "Run an analysis to see the SHAP-based feature contributions.";
+  featureContributions.textContent = "Run an analysis to see the SHAP explanation.";
   confusionMatrix.innerHTML = '<div class="empty-state">Run an analysis to see the matrix.</div>';
   classificationReport.textContent = "Run an analysis to see the report.";
   predictionTable.querySelector("tbody").innerHTML =
@@ -182,6 +186,38 @@ function renderWarnings(warnings) {
 
   warningsBox.className = "warnings";
   warningsBox.innerHTML = `<strong>Warnings</strong><ul>${warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join("")}</ul>`;
+}
+
+function renderModelParameters(payload) {
+  const parameters = payload.model_parameters || {};
+  const entries = Object.entries(parameters);
+  if (!entries.length || payload.model_name !== "xgboost") {
+    modelParametersBox.classList.add("hidden");
+    modelParameters.innerHTML = "";
+    return;
+  }
+
+  const preferredOrder = [
+    "n_estimators",
+    "max_depth",
+    "learning_rate",
+    "subsample",
+    "colsample_bytree",
+    "random_state",
+    "eval_metric"
+  ];
+  const orderedEntries = preferredOrder
+    .filter((key) => key in parameters)
+    .map((key) => [key, parameters[key]]);
+
+  modelParameters.innerHTML = orderedEntries
+    .map(([key, value]) => {
+      const label = key.replaceAll("_", " ");
+      return `<div class="model-parameter"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`;
+    })
+    .join("");
+
+  modelParametersBox.classList.remove("hidden");
 }
 
 function setCompatibilityVisible(isVisible) {
@@ -316,20 +352,40 @@ function collectCompatibilityMapping() {
 function renderFeatureContributions(prediction) {
   if (!prediction || !prediction.top_contributions || !prediction.top_contributions.length) {
     featureContributions.className = "contribution-box empty-state";
-    featureContributions.textContent = "No feature contributions were returned for this row.";
+    featureContributions.textContent = "No SHAP explanation was returned for this row.";
     return;
   }
 
-  const label = prediction.company_name ? `${prediction.company_name} - ` : "";
-  const items = prediction.top_contributions
+  const companyLabel = prediction.company_name ? `${prediction.company_name}` : "This company";
+  const contributions = prediction.top_contributions.map((item) => ({
+    ...item,
+    shapValue: Number(item.shap_value) || 0,
+    magnitude: Math.abs(Number(item.shap_value) || 0)
+  }));
+  const maxMagnitude = Math.max(...contributions.map((item) => item.magnitude), 0.000001);
+  const items = contributions
     .map((item) => {
-      const direction = item.direction === "negative" ? "reduces" : "supports";
-      return `<li><strong>${escapeHtml(item.feature)}</strong> ${direction} the prediction by ${Number(item.shap_value).toFixed(4)}</li>`;
+      const directionText = item.shapValue < 0 ? "Pushes away" : "Pushes toward";
+      const width = Math.max(8, (item.magnitude / maxMagnitude) * 100);
+      return `<li class="shap-item">
+        <div class="shap-item-head">
+          <strong>${escapeHtml(item.feature)}</strong>
+          <span class="shap-pill ${item.shapValue < 0 ? "negative" : "positive"}">${directionText}</span>
+        </div>
+        <div class="shap-bar" aria-hidden="true"><span style="width: ${width}%"></span></div>
+        <div class="shap-item-meta">SHAP value: ${item.shapValue >= 0 ? "+" : ""}${item.shapValue.toFixed(4)}</div>
+      </li>`;
     })
     .join("");
 
   featureContributions.className = "contribution-box";
-  featureContributions.innerHTML = `<p><strong>${escapeHtml(label + prediction.predicted_rating_group)}</strong></p><ul>${items}</ul>`;
+  featureContributions.innerHTML = `
+    <div class="shap-summary">
+      <p class="shap-summary-title"><strong>${escapeHtml(companyLabel)}</strong> was predicted as <strong>${escapeHtml(prediction.predicted_rating_group)}</strong>.</p>
+      <p class="shap-summary-copy">The list below shows the strongest features behind that result, ordered from biggest effect to smallest.</p>
+    </div>
+    <ul class="shap-list">${items}</ul>
+  `;
 }
 
 function renderPredictionRows(rows) {
@@ -584,6 +640,7 @@ function renderResponse(payload) {
   accuracy.textContent = formatPercent(payload.metrics?.baseline_test_accuracy);
   weightedF1.textContent = formatPercent(payload.metrics?.baseline_test_weighted_f1);
   macroF1.textContent = formatPercent(payload.metrics?.baseline_test_macro_f1);
+  renderModelParameters(payload);
   metricsNote.textContent = payload.metrics_note || metricsNote.textContent;
   renderConfusionMatrix(payload.confusion_matrix, payload.class_labels || []);
   classificationReport.textContent = payload.classification_report_text || "Unavailable";
