@@ -31,6 +31,7 @@ from common import (
     load_tabular_file,
     normalize_text,
     save_artifact,
+    sanitize_json_value,
     split_feature_columns,
     standardize_columns,
 )
@@ -142,7 +143,7 @@ def train_single_model(
         target_column=target_column,
         dataset_summary=dataset_summary,
         metrics=metrics,
-        model_parameters=estimator.get_params(deep=False),
+        model_parameters=sanitize_json_value(estimator.get_params(deep=False)),
     )
     artifact["shap_reference_rows"] = X_train.head(100).to_dict(orient="records")
 
@@ -153,6 +154,7 @@ def train_single_model(
         "model_name": model_name,
         "model_display_name": MODEL_NAME_MAP.get(model_name, model_name),
         "model_path": str(model_path),
+        "model_parameters": estimator.get_params(deep=False),
         "metrics": {
             "accuracy": metrics["accuracy"],
             "weighted_f1": metrics["weighted_f1"],
@@ -260,13 +262,13 @@ def main() -> None:
             )
         )
 
-    summary_output = {
+    summary_output = sanitize_json_value({
         "trained_at": datetime.utcnow().isoformat() + "Z",
         "source_data": str(data_path),
         "target_column": args.target_column,
         "dataset_summary": summary,
         "models": results,
-    }
+    })
 
     summary_path = output_dir / "training_summary.json"
     summary_path.write_text(json.dumps(summary_output, indent=2), encoding="utf-8")

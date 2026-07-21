@@ -12,10 +12,13 @@ const UPLOAD_DIR = path.join(ROOT_DIR, "uploads");
 const OUTPUT_DIR = path.join(ROOT_DIR, "outputs");
 const MODELS_DIR = path.join(ROOT_DIR, "models");
 const PYTHON_BIN = process.env.PYTHON_BIN || "python";
+const TRAIN_SCRIPT = path.join(ROOT_DIR, "python", "train_models.py");
 const PREDICT_SCRIPT = path.join(ROOT_DIR, "python", "predict.py");
 const MODEL_KEYS = ["decision_tree", "random_forest", "logistic_regression", "xgboost"];
 const MAX_UPLOAD_SIZE_BYTES = 10 * 1024 * 1024;
 const MAX_PYTHON_BUFFER_BYTES = Number(process.env.PYTHON_MAX_BUFFER_BYTES || 50 * 1024 * 1024);
+const OUTPUT_RETENTION_MS = 3 * 24 * 60 * 60 * 1000;
+const OUTPUT_CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 // Make sure the folders we write to always exist.
 for (const dir of [UPLOAD_DIR, OUTPUT_DIR, MODELS_DIR]) {
@@ -64,6 +67,9 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use("/outputs", express.static(OUTPUT_DIR));
 app.use(express.static(PUBLIC_DIR));
+
+cleanupOldOutputFiles();
+setInterval(cleanupOldOutputFiles, OUTPUT_CLEANUP_INTERVAL_MS).unref();
 
 function runPredictionScript(modelName, inputPath, mapping = null) {
   // The Python script does the real machine learning work.
@@ -134,6 +140,58 @@ function runPredictionScript(modelName, inputPath, mapping = null) {
     }
   } finally {
     removeUploadedFile(tempMappingPath);
+  }
+}
+
+function runTrainingScript(inputPath, targetColumn = null) {
+  const pythonArgs = ["--data", inputPath];
+  if (targetColumn) {
+    pythonArgs.push("--target-column", targetColumn);
+  }
+
+  const pythonResult = spawnSync(
+    PYTHON_BIN,
+    [TRAIN_SCRIPT, ...pythonArgs],
+    {
+      encoding: "utf-8",
+      maxBuffer: MAX_PYTHON_BUFFER_BYTES
+    }
+  );
+
+  if (pythonResult.error) {
+    return {
+      ok: false,
+      error: pythonResult.error.message
+    };
+  }
+
+  if (pythonResult.status !== 0) {
+    let parsedError = null;
+    try {
+      parsedError = JSON.parse((pythonResult.stderr || pythonResult.stdout || "").trim());
+    } catch (_err) {
+      parsedError = {
+        error: (pythonResult.stderr || pythonResult.stdout || "Training failed").trim()
+      };
+    }
+
+    return {
+      ok: false,
+      error: parsedError.error || "Training failed",
+      details: parsedError.details || null
+    };
+  }
+
+  try {
+    return {
+      ok: true,
+      data: JSON.parse((pythonResult.stdout || "").trim())
+    };
+  } catch (_err) {
+    return {
+      ok: false,
+      error: "Python training script returned invalid JSON."
+    };
   }
 }
 
@@ -223,6 +281,31 @@ function removeUploadedFile(filePath) {
     }
   } catch (_err) {
     // Upload cleanup should not block the user response.
+  }
+}
+
+function cleanupOldOutputFiles() {
+  const cutoffTime = Date.now() - OUTPUT_RETENTION_MS;
+
+  try {
+    const entries = fs.readdirSync(OUTPUT_DIR, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isFile() || entry.name === ".gitkeep") {
+        continue;
+      }
+
+      const filePath = path.join(OUTPUT_DIR, entry.name);
+      try {
+        const stats = fs.statSync(filePath);
+        if (stats.mtimeMs < cutoffTime) {
+          fs.unlinkSync(filePath);
+        }
+      } catch (_err) {
+        // Best-effort cleanup only.
+      }
+    }
+  } catch (_err) {
+    // Best-effort cleanup only.
   }
 }
 
@@ -398,6 +481,38 @@ app.post("/api/analyze-manual", (req, res) => {
   } catch (error) {
     return res.status(400).json({ error: error.message || "Manual analysis failed." });
   }
+});
+
+app.post("/api/retrain", (req, res) => {
+  upload.single("dataset")(req, res, (uploadError) => {
+    if (uploadError) {
+      removeUploadedFile(req.file && req.file.path);
+      return res.status(400).json({ error: mapUploadError(uploadError) });
+    }
+
+    const uploadedPath = req.file && req.file.path;
+
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: "Please upload a labeled dataset file before retraining." });
+      }
+
+      const targetColumn = String(req.body && req.body.target_column ? req.body.target_column : "").trim();
+      const result = runTrainingScript(uploadedPath, targetColumn || null);
+
+      if (!result.ok) {
+        return res.status(400).json({
+          error: result.error,
+          details: result.details || null
+        });
+      }
+
+      const response = result.data;
+      return res.json(response);
+    } finally {
+      removeUploadedFile(uploadedPath);
+    }
+  });
 });
 
 app.use((error, _req, res, next) => {

@@ -25,6 +25,7 @@ from common import (
     load_tabular_file,
     normalize_column_name,
     standardize_columns,
+    sanitize_json_value,
 )
 
 
@@ -343,9 +344,9 @@ def summarize_model_parameters(model_key: str, artifact: dict[str, object]) -> d
         ]
         filtered = {key: parameters[key] for key in preferred_keys if key in parameters}
         if filtered:
-            return filtered
+            return sanitize_json_value(filtered)
 
-        return {
+        return sanitize_json_value({
             "n_estimators": 200,
             "max_depth": 5,
             "learning_rate": 0.1,
@@ -353,9 +354,9 @@ def summarize_model_parameters(model_key: str, artifact: dict[str, object]) -> d
             "colsample_bytree": 0.8,
             "random_state": 42,
             "eval_metric": "mlogloss",
-        }
+        })
 
-    return parameters
+    return sanitize_json_value(parameters)
 
 
 def build_prediction_rows(
