@@ -16,58 +16,13 @@
         <p class="eyebrow">Credit Risk Analysis Platform</p>
         <h1>CreditSight</h1>
         <p class="hero-copy">
-          Retrain the four credit-risk models on a labeled dataset, then run manual assessments or batch predictions with the updated models and metrics.
+          Run manual assessments or batch predictions with the saved credit-risk models and review the results, model settings, and explanations.
         </p>
       </div>
       <div class="hero-badge">
-        <span>Retrain</span>
         <span>Predict</span>
         <span>Explain</span>
-      </div>
-    </section>
-
-    <section class="card panel retrain-card">
-      <div class="mode-panel-copy">
-        <h2>Retrain Models</h2>
-        <p class="section-copy">
-          Upload a labeled dataset, and CreditSight will retrain Decision Tree, Random Forest, Logistic Regression, and XGBoost on that data. The latest metrics will replace the previous saved models.
-        </p>
-        <p class="section-note">
-          The file must include the rating column. If it is not named `Rating`, enter the target column name below.
-        </p>
-      </div>
-      <form id="retrainForm" class="retrain-form">
-        <label>
-          Training dataset
-          <input id="retrainDataset" name="dataset" type="file" accept=".csv,.xlsx,.xls" required />
-        </label>
-
-        <label>
-          Target column name
-          <input id="targetColumn" name="target_column" type="text" placeholder="Rating" />
-        </label>
-
-        <button id="retrainSubmitButton" type="submit" class="primary-button">Retrain All Models</button>
-      </form>
-
-      <div id="retrainStatus" class="status hidden"></div>
-
-      <div id="trainingResultsPanel" class="training-results hidden">
-        <h3>Latest Training Results</h3>
-        <div class="table-wrap">
-          <table class="training-table">
-            <thead>
-              <tr>
-                <th>Model</th>
-                <th>Accuracy</th>
-                <th>Weighted F1</th>
-                <th>Macro F1</th>
-                <th>Key Parameters</th>
-              </tr>
-            </thead>
-            <tbody id="trainingResultsBody"></tbody>
-          </table>
-        </div>
+        <span>Review</span>
       </div>
     </section>
 
@@ -221,7 +176,7 @@
           <h3>Active Model Settings</h3>
           <div id="modelParameters" class="model-parameters-list"></div>
         </div>
-        <p id="metricsNote" class="metrics-note">These metrics come from the most recent retraining run, not the uploaded company file.</p>
+        <p id="metricsNote" class="metrics-note">These metrics come from the saved model artifacts trained on Dataset A, not the uploaded company file.</p>
 
         <div id="warningsBox" class="warnings hidden"></div>
 

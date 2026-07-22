@@ -198,12 +198,15 @@ def main() -> None:
         "decision_tree": {
             "estimator": DecisionTreeClassifier(
                 random_state=42,
-                criterion="entropy",
+                criterion="gini",
                 max_depth=None,
+                max_features="log2",
                 min_samples_split=2,
                 min_samples_leaf=1,
+                class_weight="balanced",
+                splitter="random",
             ),
-            "scale_numeric": True,
+            "scale_numeric": False,
         },
         "random_forest": {
             "estimator": RandomForestClassifier(

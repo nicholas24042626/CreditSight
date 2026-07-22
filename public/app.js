@@ -18,13 +18,6 @@ const modelParametersBox = document.getElementById("modelParametersBox");
 const modelParameters = document.getElementById("modelParameters");
 const overallRiskSummary = document.getElementById("overallRiskSummary");
 const overallRiskSearch = document.getElementById("overallRiskSearch");
-const retrainForm = document.getElementById("retrainForm");
-const retrainDataset = document.getElementById("retrainDataset");
-const targetColumnInput = document.getElementById("targetColumn");
-const retrainSubmitButton = document.getElementById("retrainSubmitButton");
-const retrainStatus = document.getElementById("retrainStatus");
-const trainingResultsPanel = document.getElementById("trainingResultsPanel");
-const trainingResultsBody = document.getElementById("trainingResultsBody");
 const confusionMatrix = document.getElementById("confusionMatrix");
 const classificationReport = document.getElementById("classificationReport");
 const predictionTable = document.getElementById("predictionTable");
@@ -111,7 +104,6 @@ const MANUAL_FIELD_SECTIONS = [
 
 let currentPredictions = [];
 let currentCompatibility = null;
-let currentTrainingSummary = null;
 let currentOverallRiskAggregates = [];
 let currentOverallRiskQuery = "";
 const CREDIT_RISK_ORDER = ["Investment-High", "Investment-Low", "Speculative", "Distressed"];
@@ -164,7 +156,7 @@ function clearResults() {
   }
   overallRiskSummary.className = "overall-risk-summary empty-state";
   overallRiskSummary.innerHTML = "Run an analysis to see company-level credit risk categories.";
-  metricsNote.textContent = "These metrics come from the most recent retraining run, not the uploaded company file.";
+  metricsNote.textContent = "These metrics come from the saved model artifacts trained on Dataset A, not the uploaded company file.";
   warningsBox.className = "warnings hidden";
   warningsBox.innerHTML = "";
   featureContributions.className = "contribution-box empty-state";
@@ -179,17 +171,6 @@ function clearResults() {
   if (runBatchButton) {
     runBatchButton.disabled = true;
   }
-}
-
-function showRetrainStatus(message, type) {
-  retrainStatus.className = `status ${type}`;
-  retrainStatus.textContent = message;
-  retrainStatus.classList.remove("hidden");
-}
-
-function clearRetrainStatus() {
-  retrainStatus.className = "status hidden";
-  retrainStatus.textContent = "";
 }
 
 function formatPercent(value) {
@@ -394,32 +375,6 @@ function renderModelParameters(payload) {
     .join("");
 
   modelParametersBox.classList.remove("hidden");
-}
-
-function renderTrainingResults(summary) {
-  currentTrainingSummary = summary;
-  const models = summary?.models || [];
-  if (!models.length) {
-    trainingResultsPanel.classList.add("hidden");
-    trainingResultsBody.innerHTML = "";
-    return;
-  }
-
-  trainingResultsBody.innerHTML = models
-    .map((model) => {
-      const metrics = model.metrics || {};
-      return `
-        <tr>
-          <td>${escapeHtml(model.model_display_name || model.model_name || "-")}</td>
-          <td>${formatPercent(metrics.accuracy)}</td>
-          <td>${formatPercent(metrics.weighted_f1)}</td>
-          <td>${formatPercent(metrics.macro_f1)}</td>
-          <td>${escapeHtml(formatModelParameters(model.model_parameters))}</td>
-        </tr>`;
-    })
-    .join("");
-
-  trainingResultsPanel.classList.remove("hidden");
 }
 
 function setCompatibilityVisible(isVisible) {
@@ -700,11 +655,6 @@ function setLoadingState(isLoading, submitButton) {
   batchForm.querySelectorAll("button, input, select").forEach((element) => {
     element.disabled = isLoading && element !== submitButton;
   });
-  if (retrainForm) {
-    retrainForm.querySelectorAll("button, input, select").forEach((element) => {
-      element.disabled = isLoading && element !== submitButton;
-    });
-  }
   if (runBatchButton) {
     runBatchButton.disabled = isLoading || !(currentCompatibility && currentCompatibility.compatible);
   }
@@ -754,48 +704,6 @@ async function submitManualAssessment(event) {
     showStatus("Manual assessment completed.", "success");
   } catch (error) {
     showStatus(error.message, "error");
-  } finally {
-    setLoadingState(false, submitButton);
-  }
-}
-
-async function submitRetrainRequest(event) {
-  event.preventDefault();
-  clearStatus();
-  clearRetrainStatus();
-
-  if (!retrainDataset.files.length) {
-    showRetrainStatus("Please upload a labeled training dataset first.", "error");
-    return;
-  }
-
-  const submitButton = retrainSubmitButton;
-  try {
-    const formData = new FormData();
-    formData.append("dataset", retrainDataset.files[0]);
-    const targetColumnValue = String(targetColumnInput.value || "").trim();
-    if (targetColumnValue) {
-      formData.append("target_column", targetColumnValue);
-    }
-
-    setLoadingState(true, submitButton);
-    showRetrainStatus("Retraining models. Please wait...", "success");
-
-    const response = await fetch("/api/retrain", {
-      method: "POST",
-      body: formData
-    });
-
-    const responsePayload = await response.json();
-    if (!response.ok) {
-      const detailText = responsePayload.details ? ` ${typeof responsePayload.details === "string" ? responsePayload.details : JSON.stringify(responsePayload.details)}` : "";
-      throw new Error(`${responsePayload.error || "Retraining failed."}${detailText}`);
-    }
-
-    renderTrainingResults(responsePayload);
-    showRetrainStatus("Retraining completed. The saved models and metrics have been updated.", "success");
-  } catch (error) {
-    showRetrainStatus(error.message, "error");
   } finally {
     setLoadingState(false, submitButton);
   }
@@ -890,7 +798,7 @@ function renderResponse(payload) {
   weightedF1.textContent = formatPercent(payload.metrics?.baseline_test_weighted_f1);
   macroF1.textContent = formatPercent(payload.metrics?.baseline_test_macro_f1);
   renderModelParameters(payload);
-  metricsNote.textContent = payload.metrics_note || "These metrics come from the most recent retraining run, not the uploaded company file.";
+  metricsNote.textContent = payload.metrics_note || "These metrics come from the saved model artifacts trained on Dataset A, not the uploaded company file.";
   renderConfusionMatrix(payload.confusion_matrix, payload.class_labels || []);
   classificationReport.textContent = payload.classification_report_text || "Unavailable";
   renderOverallRiskSummary(payload.predictions || []);
@@ -923,7 +831,6 @@ overallRiskSearch.addEventListener("input", () => {
   currentOverallRiskQuery = overallRiskSearch.value || "";
   renderOverallRiskSummaryTable();
 });
-retrainForm.addEventListener("submit", submitRetrainRequest);
 manualForm.addEventListener("submit", submitManualAssessment);
 batchForm.addEventListener("submit", checkBatchCompatibility);
 runBatchButton.addEventListener("click", runBatchPrediction);
@@ -941,4 +848,3 @@ batchModelSelect.addEventListener("change", () => {
 populateManualForm();
 setMode("manual");
 clearResults();
-clearRetrainStatus();
