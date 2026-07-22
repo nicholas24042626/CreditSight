@@ -156,7 +156,7 @@ function clearResults() {
   }
   overallRiskSummary.className = "overall-risk-summary empty-state";
   overallRiskSummary.innerHTML = "Run an analysis to see company-level credit risk categories.";
-  metricsNote.textContent = "These metrics come from the saved model artifacts trained on Dataset A, not the uploaded company file.";
+  metricsNote.textContent = "Model metrics shown here are based on Dataset A's test set, not the uploaded file.";
   warningsBox.className = "warnings hidden";
   warningsBox.innerHTML = "";
   featureContributions.className = "contribution-box empty-state";
@@ -798,7 +798,7 @@ function renderResponse(payload) {
   weightedF1.textContent = formatPercent(payload.metrics?.baseline_test_weighted_f1);
   macroF1.textContent = formatPercent(payload.metrics?.baseline_test_macro_f1);
   renderModelParameters(payload);
-  metricsNote.textContent = payload.metrics_note || "These metrics come from the saved model artifacts trained on Dataset A, not the uploaded company file.";
+  metricsNote.textContent = payload.metrics_note || "Model metrics shown here are based on Dataset A's test set, not the uploaded file.";
   renderConfusionMatrix(payload.confusion_matrix, payload.class_labels || []);
   classificationReport.textContent = payload.classification_report_text || "Unavailable";
   renderOverallRiskSummary(payload.predictions || []);
