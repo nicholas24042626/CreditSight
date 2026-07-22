@@ -16,7 +16,7 @@
 6. Class Imbalance (present in your data, not actively corrected — explained)
 7. Machine Learning Models (Logistic Regression, Decision Tree, Random Forest, XGBoost)
 8. XGBoost Masterclass
-9. Hyperparameter Tuning (what you have vs. what Optuna/Grid Search would add)
+9. Hyperparameter Tuning (documented `GridSearchCV`/`RandomizedSearchCV` work for XGBoost; undocumented for the other three models; what Optuna would still add)
 10. Model Evaluation — every metric explained
 11. Explainable AI — SHAP in your notebooks
 12. Code Walkthrough — every file, function by function
@@ -24,7 +24,17 @@
 14. Glossary (alphabetical)
 15. 100+ Evaluator Questions with Model Answers
 16. Distinction-Level Critique of Your Own Project
-17. Final Distinction Checklist
+17. XGBoost vs. Untried Alternatives (SVM, Neural Networks, LightGBM, CatBoost)
+18. Term Encyclopedia — The High-Yield Terms, Deepened
+19. Mathematics Appendix — Every Formula, Consolidated
+20. Design Decisions — Rapid-Fire Defence
+21. Common Mistakes — What Trips Up Students in General ML Vivas
+22. Distinction Tiers — What Separates Pass, Credit, Distinction, High Distinction
+23. Hidden Questions — What Separates Top Students
+24. Knowledge Map — How Everything Connects
+25. Feynman Test — Explaining This Project at Every Level
+26. Expanded Question Bank — Additional Questions by Difficulty Tier
+27. Final Distinction Checklist
 
 ---
 
@@ -67,7 +77,7 @@ For **small and medium enterprises (SMEs)**, formal agency ratings are often una
 ## 1.5 Limitations (be upfront about these — evaluators respect this more than false confidence)
 
 1. **The model predicts rating buckets, not real-world default.** It was trained to imitate historical agency ratings, not to predict actual bankruptcy or missed payments. Rating agencies themselves are imperfect (they were widely criticised after 2008 for mis-rating mortgage-backed securities), so the model inherits any bias or lag already present in agency ratings.
-2. **The best model (Random Forest / XGBoost) achieves roughly 68% test accuracy** on a 4-class problem where the "always guess the majority-ish class" baseline is meaningfully lower but not negligible (see §10 for exact baseline maths). This is a reasonable but not deployment-grade result for real lending decisions.
+2. **The best model (XGBoost) achieves roughly 69% test accuracy** (Random Forest is close behind at 68.5%) on a 4-class problem where the "always guess the majority-ish class" baseline is meaningfully lower but not negligible (see §10 for exact baseline maths). This is a reasonable but not deployment-grade result for real lending decisions.
 3. **The "Distressed" class is severely under-represented** (22 of 609 test rows — see §6), and every model's recall on that class is poor. This is precisely the class a bank cares about most, which is an important, honest weakness to raise proactively.
 4. **The dataset covers large, already-rated, mostly US public companies** (this is inferable from the presence of Rating Agency Name, Symbol, and Sector fields typical of listed-company datasets). Applying it to unlisted SMEs is an extrapolation beyond the training distribution — a point examiners specifically probe.
 5. **No temporal validation.** The split is a random 70/30 shuffle, not an out-of-time split (train on earlier years, test on later years). In real credit risk modelling, out-of-time validation is considered best practice because relationships between ratios and ratings can drift over economic cycles.
@@ -436,7 +446,11 @@ Trace a single row of the training CSV through `prepare_training_frame()` (`trai
 ## 5.4 The `ColumnTransformer`: Imputation and Encoding
 
 ```python
-numeric_pipe = Pipeline([("imputer", SimpleImputer(strategy="median"))])
+numeric_steps = [("imputer", SimpleImputer(strategy="median"))]
+if scale_numeric:
+    numeric_steps.append(("minmax", MinMaxScaler()))
+numeric_pipe = Pipeline(numeric_steps)
+
 categorical_pipe = Pipeline([
     ("imputer", SimpleImputer(strategy="most_frequent")),
     ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False)),
@@ -446,6 +460,8 @@ preprocessor = ColumnTransformer([
     ("categorical", categorical_pipe, categorical_columns),
 ], remainder="drop")
 ```
+
+**`scale_numeric` (added since the initial version of this pipeline).** `build_preprocessor()` now takes a `scale_numeric: bool = False` parameter that conditionally appends a `MinMaxScaler` step after imputation. `train_models.py` passes `scale_numeric=True` for Decision Tree, Random Forest, and Logistic Regression, and `scale_numeric=False` for XGBoost specifically. This is a deliberate, model-aware choice rather than an oversight: tree-based splits are invariant to monotonic rescaling (§5.5), so scaling XGBoost would be wasted work, while Logistic Regression's gradient-based optimizer is genuinely scale-sensitive. Decision Tree and Random Forest don't strictly need it either, but scaling them causes no harm (their splits are unaffected) and keeps one shared preprocessing call simpler to reason about across the three non-XGBoost models. Note that `predict.py` never calls `build_preprocessor()` itself or needs to know `scale_numeric` at all — it loads the entire already-fitted `Pipeline` object (preprocessor and model together) straight out of each model's `.joblib` file, so whichever scaling choice was baked in at training time travels with the artifact automatically. This sidesteps the training-serving skew risk §5.2 describes, rather than depending on the two scripts staying manually in sync.
 
 **What is a `Pipeline`?** A scikit-learn `Pipeline` chains a sequence of transform steps (and, optionally, a final estimator) so that calling `.fit()` once fits every step in order, and calling `.predict()` once pushes new data through every fitted transform in the same order before the final model sees it. **Why it exists:** without it, you would have to manually remember to apply the *exact same* fitted imputer/encoder (not a freshly-fit one!) to new data at prediction time — a very easy thing to get subtly wrong (this is another concrete defence against training-serving skew, §5.2). **Advantage:** guarantees identical, leak-free transformation order between train and inference. **Disadvantage:** debugging an error inside a long pipeline can be less transparent than inspecting each step manually; and every step must expose the scikit-learn `fit`/`transform` interface.
 
@@ -483,9 +499,9 @@ preprocessor = ColumnTransformer([
 
 **Disadvantages:** it increases dimensionality (12 sectors → 12 columns instead of 1), which is a minor concern here given the dataset's modest size, but would become a real problem ("the curse of dimensionality") with a categorical feature that had hundreds or thousands of distinct values (e.g., raw company name, which is exactly why it was dropped rather than encoded, §3.2).
 
-## 5.5 Scaling, Normalization, and Standardization — ⚠️ Not implemented in this project
+## 5.5 Scaling, Normalization, and Standardization — Min-Max scaling is implemented (model-conditionally), standardization is not
 
-These three terms are frequently confused, so define them precisely, then be explicit that **none of them appear anywhere in `common.py`, `train_models.py`, or `predict.py`.**
+These three terms are frequently confused, so define them precisely, then be explicit about what's actually in the code: `common.py`'s `build_preprocessor()` supports **Min-Max normalization** via an optional `scale_numeric` flag (§5.4) — currently switched on for Decision Tree, Random Forest, and Logistic Regression, and off for XGBoost. **Z-score standardization (`StandardScaler`) is not implemented anywhere** in `common.py`, `train_models.py`, or `predict.py`.
 
 **Standardization (Z-score scaling):** transforms a feature so it has mean 0 and standard deviation 1: $z = \frac{x - \mu}{\sigma}$. Its purpose is to put features that were originally on very different numeric scales (e.g., a ratio ranging roughly 0–5 vs. a per-share dollar value ranging into the hundreds) onto a comparable footing, so that no feature dominates a distance- or gradient-based algorithm purely because of the units it happens to be measured in.
 
@@ -493,9 +509,9 @@ These three terms are frequently confused, so define them precisely, then be exp
 
 **Why this matters for *this specific dataset*.** Your 24 financial ratios genuinely are on wildly different scales — `currentRatio` is typically a small number close to 1–3, while `freeCashFlowPerShare` or `cashPerShare` can be tens or hundreds of dollars, and `enterpriseValueMultiple` can run into double digits. Algorithms that compute distances or weighted linear combinations of raw feature values — **Logistic Regression is exactly this kind of algorithm** — are sensitive to this. A feature with naturally larger raw magnitude can dominate the optimizer's gradient steps purely due to scale, not because it's actually more informative.
 
-**Is this an oversight, or a defensible omission? Be precise: it is a real, verifiable weakness for Logistic Regression, and largely irrelevant for the tree-based models.** Decision Tree, Random Forest, and XGBoost make splits by asking "is feature X above or below threshold T?" — a question whose answer is completely unaffected by whether X is measured in dollars, ratios, or any monotonic rescaling of itself. Logistic Regression, by contrast, fits coefficients via gradient-based optimization over a weighted sum of raw feature values, and **is** sensitive to feature scale, both for numerical optimizer convergence and for the interpretability of its coefficients. Since all four models in this project share **one** `build_preprocessor()` with no scaling step, Logistic Regression is trained at a genuine, avoidable disadvantage relative to the other three. This is, in fact, one of the most defensible and concrete critiques you can raise about your own project (see §16) — and it is directly consistent with the observed result that Logistic Regression scored dramatically worse (37.3% accuracy) than the other three models (55–68%), a gap far larger than you'd normally expect between these algorithm families on the same features.
+**Why Logistic Regression specifically needed this fix, and why XGBoost specifically doesn't get it.** Decision Tree, Random Forest, and XGBoost make splits by asking "is feature X above or below threshold T?" — a question whose answer is completely unaffected by whether X is measured in dollars, ratios, or any monotonic rescaling of itself (§5.7's earlier version of this project confirmed this empirically for XGBoost: raw-feature and Min-Max-scaled `GridSearchCV` runs landed on identical best hyperparameters and near-identical test accuracy — see the notebook's Experiment 7 vs. Experiment 8). Logistic Regression, by contrast, fits coefficients via gradient-based optimization over a weighted sum of raw feature values, and **is** sensitive to feature scale, both for numerical optimizer convergence and for the interpretability of its coefficients. `scale_numeric=True` for Logistic Regression (and, harmlessly, for the two tree-based non-XGBoost models sharing the same call) is a genuine, evidence-backed fix for exactly the disadvantage §16 originally flagged as a critique — the result table (§10.1) now shows Logistic Regression's accuracy rising from an earlier, unscaled 37.3% to 47.95% once scaling was added, though it remains the weakest of the four models overall.
 
-**What you should say if asked "why didn't you scale your features?":** *"I didn't add a scaling step to the shared preprocessing pipeline. Because all four models go through one `ColumnTransformer`, adding `StandardScaler` would have been simple, but I didn't isolate it as model-specific preprocessing. In hindsight, this is a genuine weakness that specifically disadvantages Logistic Regression, and is a likely contributor to its much lower accuracy relative to the tree-based models, which don't need scaling to perform well."* This is a far stronger answer than pretending the omission doesn't matter.
+**What you should say if asked "why didn't you scale your features?":** this is no longer accurate for the current codebase — say instead: *"I did add a conditional Min-Max scaling step to the shared preprocessing pipeline, switched on for Logistic Regression and the two non-XGBoost tree models, and off for XGBoost specifically, since tree splits are provably invariant to it. This measurably improved Logistic Regression's accuracy. I did not implement Z-score standardization or a power transform (Yeo-Johnson, §5.6) — Min-Max was the simpler fix and was sufficient to test the hypothesis that scale was disadvantaging the linear model."*
 
 ## 5.6 Power Transforms — Yeo-Johnson, Box-Cox, Log Transform — ⚠️ Not implemented in this project
 
@@ -538,7 +554,7 @@ The parameter $\lambda$ (lambda) is estimated from the data itself (typically by
 **Likely evaluator questions on this topic:**
 
 - *"Did you check your features for skewness before training?"* → Honest answer: no formal skewness check (e.g., no computed `scipy.stats.skew()` values) was performed in the code; this would be a natural addition to an EDA (exploratory data analysis) step.
-- *"Would Yeo-Johnson have improved your Logistic Regression results?"* → Plausibly yes, since Logistic Regression is scale/shape-sensitive and currently receives no scaling or transform at all; you cannot claim a guaranteed improvement without having run the experiment, and you should say exactly that rather than overclaiming.
+- *"Would Yeo-Johnson have improved your Logistic Regression results?"* → Possibly, on top of the Min-Max scaling it already receives (§5.5) — Yeo-Johnson additionally addresses skew/shape, which scaling alone does not fix. You cannot claim a guaranteed further improvement without having run the experiment, and you should say exactly that rather than overclaiming.
 - *"Why would Box-Cox fail on your dataset specifically?"* → Because several ratio columns (e.g., `netProfitMargin`, `returnOnEquity`) contain negative values for loss-making or negative-equity companies, and Box-Cox requires strictly positive input.
 
 ## 5.7 Outlier Handling — Conceptual Treatment (tied to §3.10)
@@ -573,7 +589,7 @@ X_train, X_test, y_train, y_test = train_test_split(
 
 **Cross-validation — explained conceptually, and confirmed absent from this project.** Cross-validation (most commonly **k-fold cross-validation**) is a more robust alternative/complement to a single train/test split: the data is divided into $k$ equal folds, and the model is trained $k$ times, each time using $k-1$ folds for training and the remaining fold for testing, rotating which fold is held out each time. The final reported metric is the average across all $k$ runs. **Why it exists:** a single train/test split gives you one performance estimate that depends partly on the luck of which specific rows ended up in the test set; cross-validation reduces this variance by averaging over multiple different splits, giving a more statistically stable estimate of true generalization performance, and it uses every row for both training and testing (across different folds) rather than permanently sacrificing 30% of the data to evaluation alone. **This project uses a single stratified train/test split, not cross-validation** — verified by the complete absence of `cross_val_score`, `KFold`, or `StratifiedKFold` anywhere in `train_models.py`, `predict.py`, `common.py`, or any notebook. This is a real methodological limitation: the reported accuracy/F1 numbers in `training_summary.json` are a single-split estimate and carry more sampling variance than a cross-validated estimate would, especially for the tiny `Distressed` class. Be ready to say exactly this if asked "how confident are you in these numbers" — the honest answer is "moderately, but a k-fold cross-validation would give a tighter, more defensible estimate, particularly for the minority class."
 
-**What is a validation set, and is one used here?** A validation set is a third partition (distinct from train and test) used during model development to tune choices (like hyperparameters) *without* touching the final test set, so that the test set remains a genuinely unbiased, "never seen until the very end" measure of final performance. **This project has no separate validation set** — because no hyperparameter tuning is performed (§9), there is no tuning loop that would need one. If hyperparameter tuning were added, a validation set (or cross-validation within the training data) would become necessary to avoid tuning against, and thereby contaminating, the test set.
+**What is a validation set, and is one used here?** A validation set is a third partition (distinct from train and test) used during model development to tune choices (like hyperparameters) *without* touching the final test set, so that the test set remains a genuinely unbiased, "never seen until the very end" measure of final performance. **`train_models.py` and `predict.py` have no separate validation set** — `X_test` doubles as the set each model's final metrics are reported against. The exploratory hyperparameter-tuning work in `notebook/xgboost/xgboost.ipynb` (§9) does use proper 5-fold `StratifiedKFold` cross-validation *within* `X_train` for each `GridSearchCV`/`RandomizedSearchCV` call, which is the correct way to search without touching `X_test` — but that notebook's ablation experiments still each score their final chosen configuration once on the shared `X_test`, and multiple experiments are compared against each other using that same test set's numbers (§9.7), which is a mild, worth-naming reuse of the "held-out" set across several rounds of decision-making rather than a single untouched final check.
 
 ## 5.9 Data Leakage — A Concept You Must Be Able to Defend Precisely
 
@@ -611,11 +627,11 @@ Already covered mechanically in §5.4; conceptually, the key exam-ready statemen
 
 **The core problem.** Imagine a hypothetical (not your actual) model that *always* predicts "Speculative" regardless of input. On this test set, that trivial, useless model would still be correct 238/609 = **39.1% of the time** purely because Speculative is the plurality class. Accuracy alone cannot distinguish this trivial model from a genuinely useful one unless you also look at *per-class* performance.
 
-**Concretely, your project's own numbers illustrate this perfectly.** Look at Logistic Regression's confusion matrix from `training_summary.json`: it predicts "Speculative" for the overwhelming majority of rows regardless of true class (216 of 238 true-Speculative rows correctly caught, but also 140 of 148 true-Investment-High rows and 190 of 201 true-Investment-Low rows *wrongly* dumped into Speculative). Its overall accuracy (37.3%) is *still meaningfully above the 39.1% naive-majority baseline* — actually, wait, precisely: **37.3% is below the naive-majority baseline of 39.1%**, meaning Logistic Regression as trained here performs *worse* than simply always guessing "Speculative." This is one of the most important, concrete, defensible critiques in your entire project (also discussed in §7.1, §10, §16) — you must be able to state this exact fact and its cause (near-total class collapse driven by unscaled features, see §5.5) confidently, not evasively.
+**Concretely, your project's own numbers illustrate why per-class performance still matters even for the *best* models here, not just the weakest.** Look at every model's confusion matrix in `training_summary.json`: Random Forest and XGBoost both catch only 2/22 and 5/22 Distressed rows respectively despite being the two strongest models overall by accuracy — the majority classes dominate the aggregate accuracy number while the minority class is still barely being learned. Logistic Regression, now with Min-Max scaling applied (§5.5), reaches 47.95% accuracy — above the 39.1% naive-majority baseline, unlike an earlier unscaled version of this pipeline where it scored 37.3% and fell *below* that baseline — but it remains the weakest of the four models and still only correctly recalls 2/22 Distressed rows. The lesson accuracy alone hides is the same either way: a model can look reasonable in aggregate while being nearly blind to the class a lender would care about most (also discussed in §7.1, §10, §16).
 
-## 6.3 Techniques for Correcting Imbalance — ⚠️ None of these are implemented in this project
+## 6.3 Techniques for Correcting Imbalance — ⚠️ None of these are implemented in production, one has been tested in the XGBoost notebook
 
-Verified by direct search: there is no import of `imblearn` (the standard Python library for these techniques), no `SMOTE`, no `class_weight` parameter set on any of the four estimators, no manual oversampling/undersampling logic, anywhere in `common.py`, `train_models.py`, `predict.py`, or the notebooks. All four models in `train_models.py` are constructed with only `random_state` (and, for XGBoost, `eval_metric`) set — every other hyperparameter, including any imbalance-handling option, is left at its scikit-learn/XGBoost default. This section explains what each of the standard corrective techniques is, so you can discuss them intelligently and explain why this project doesn't apply them.
+Verified by direct search: there is no import of `imblearn` (the standard Python library for these techniques), no `SMOTE`, no `class_weight` parameter set on any of the four estimators in `train_models.py` (`class_weight=None` is passed explicitly for Logistic Regression), and no manual oversampling/undersampling logic anywhere in `common.py`, `train_models.py`, or `predict.py`. **This is still true of production training/inference** — the hyperparameters used by all four models *have* since been tuned away from their library defaults (§9), but none of that tuning touched imbalance handling specifically. The one exception is exploratory, not production: `notebook/xgboost/xgboost.ipynb`'s ablation study (§9.7) does test `sample_weight=compute_sample_weight("balanced", y_train)` for XGBoost in isolation, and it was the single best individual step in that study for macro F1 and Distressed-class F1 — but this finding has not been carried into `train_models.py`'s actual `XGBClassifier` construction, which still fits without `sample_weight`. This section explains what each of the standard corrective techniques is, so you can discuss them intelligently and explain why production doesn't apply them yet.
 
 ### SMOTE (Synthetic Minority Oversampling Technique)
 
@@ -657,7 +673,7 @@ Verified by direct search: there is no import of `imblearn` (the standard Python
 
 **What it is.** Rather than changing the *data* (oversampling/undersampling), several scikit-learn estimators (including `LogisticRegression`, `DecisionTreeClassifier`, and `RandomForestClassifier`) accept a `class_weight` parameter that changes the *loss function* itself, multiplying the error contribution of each class by an inverse-frequency weight, so mistakes on the rare `Distressed` class are penalized more heavily during training than mistakes on the common `Speculative` class, without duplicating or synthesizing any rows.
 
-**Why this would likely have been the lowest-effort, highest-value fix available for this project.** Setting `class_weight="balanced"` is a single keyword argument change per estimator (XGBoost has an analogous mechanism via `scale_pos_weight` for binary problems, or `sample_weight` more generally for multi-class) — it requires no new library, no risk of leakage, no synthetic-data geometry concerns, and directly targets the exact symptom visible in every confusion matrix in this project (`Distressed` recall near-zero for Decision Tree and Logistic Regression, and only 14% even for the best model, XGBoost — see §10). If asked "if you only had one afternoon to improve this project, what would you do first?", `class_weight="balanced"` is a strong, concrete, low-risk answer.
+**Why this would likely have been the lowest-effort, highest-value fix available for this project — and why we already have evidence, not just theory, that it works.** Setting `class_weight="balanced"` is a single keyword argument change per estimator (XGBoost has an analogous mechanism via `scale_pos_weight` for binary problems, or `sample_weight` more generally for multi-class) — it requires no new library, no risk of leakage, no synthetic-data geometry concerns, and directly targets the exact symptom visible in every confusion matrix in this project (`Distressed` recall between 9% and 23% across all four models — see §10, §6.4). This isn't just theoretical for this project: the XGBoost notebook's ablation study (§9.7) already tested `sample_weight=compute_sample_weight("balanced", y_train)` in isolation and found it the single best individual step for both macro F1 and Distressed F1 — the fix has been validated, it just hasn't been carried into `train_models.py`. If asked "if you only had one afternoon to improve this project, what would you do first?", carrying that specific, already-tested change into production is a stronger, more concrete answer than proposing `class_weight="balanced"` untested.
 
 ## 6.4 Why This Project's Choice Not to Correct Imbalance Is a Real, Nameable Weakness
 
@@ -666,10 +682,10 @@ Be direct about this in your report and defence rather than hoping it isn't noti
 
 | Model               | Distressed recall (of 22 true Distressed rows) | Distressed precision | Distressed predicted at all?                                                                         |
 | ------------------- | ---------------------------------------------- | -------------------- | ---------------------------------------------------------------------------------------------------- |
-| Decision Tree       | 7/22 = 32%                                     | 33%                  | Yes, 21 times total (14 wrong)                                                                       |
-| Random Forest       | 2/22 = 9%                                      | 100%                 | Only 2 times in the whole 609-row test set, both correct                                             |
-| Logistic Regression | 0/22 = 0%                                      | 0%                   | Yes, 7 times — but every single one was actually a Speculative company, never a real Distressed one |
-| XGBoost             | 3/22 = 14%                                     | 60%                  | 5 times total (2 wrong)                                                                              |
+| Decision Tree       | 3/22 = 14%                                     | 21%                  | Yes, 14 times total (11 wrong)                                                                       |
+| Random Forest       | 2/22 = 9%                                      | 67%                  | Yes, 3 times total (1 wrong)                                                                          |
+| Logistic Regression | 2/22 = 9%                                      | 33%                  | Yes, 6 times total (4 wrong)                                                                          |
+| XGBoost             | 5/22 = 23%                                     | 71%                  | Yes, 7 times total (2 wrong) — now the best of the four on this specific class                       |
 
 (All four numbers per model are taken directly from the `classification_report_text` in `models/training_summary.json` and cross-checked against the raw confusion matrices.)
 
@@ -683,7 +699,7 @@ All four models in this project are trained through the identical `train_single_
 
 ## 7.1 Logistic Regression
 
-**Estimator used:** `sklearn.linear_model.LogisticRegression(random_state=42, max_iter=2000)`. Every other hyperparameter (regularization strength `C`, penalty type, solver) is left at scikit-learn's default.
+**Estimator used:** `sklearn.linear_model.LogisticRegression(random_state=42, max_iter=2000, C=100.0, class_weight=None, penalty="l2", solver="lbfgs")`, fed through `build_preprocessor(..., scale_numeric=True)` (§5.4–§5.5), so its inputs are now Min-Max scaled. `max_iter=2000` exists purely so the optimizer has enough iterations to converge, not as a tuning choice. `C=100.0` is a genuine, deliberate departure from scikit-learn's default (`C=1.0`) — `C` is the *inverse* of regularization strength, so `C=100.0` means very weak regularization (the model is allowed to fit the training data closely, with little penalty for large coefficients). `penalty="l2"` and `solver="lbfgs"` remain at their defaults.
 
 ### History and intuition
 
@@ -731,12 +747,12 @@ This guarantees all $K$ class probabilities are positive and sum to exactly 1. T
 ### Limitations
 
 - Can only model **linear** relationships between features and the log-odds of the outcome — cannot capture interactions between features (e.g., "high debt is only risky *combined with* low profitability") unless those interaction terms are manually engineered in as extra features, which this project does not do (§3.5).
-- Sensitive to feature scale (§5.5) and to skewed/outlier-heavy distributions (§5.6, §5.7) — because it optimizes a weighted sum of raw feature values via gradient-based methods, features on larger raw scales can dominate the fitting process regardless of true importance.
+- Sensitive to feature scale (§5.5) and to skewed/outlier-heavy distributions (§5.6, §5.7) — because it optimizes a weighted sum of feature values via gradient-based methods, features on larger raw scales can dominate the fitting process regardless of true importance. This project's Logistic Regression now receives Min-Max-scaled inputs (§5.5), which addresses the scale part of this limitation, but not the skew/outlier part (no power transform is applied, §5.6).
 - Assumes, implicitly, that classes are reasonably separable by straight lines/hyperplanes in the given feature space — a strong assumption for a genuinely nonlinear real-world relationship like credit risk, where ratios likely interact (e.g., high leverage matters far more when profitability is also weak).
 
-### Why it may underperform here — tie directly to the actual result
+### Why it underperforms here — tie directly to the actual result
 
-Logistic Regression scored **37.3% accuracy**, the worst of all four models by a wide margin, and — as established in §6.2 — *below* the naive-majority-class baseline of 39.1%. Its confusion matrix shows it collapsing almost every prediction into "Speculative" regardless of true class. The two most defensible, evidence-grounded explanations, both already established above, are: **(1)** no feature scaling was applied (§5.5), which actively disadvantages a coefficient-based linear optimizer in a way it does not disadvantage tree-based splits; and **(2)** the true relationship between these 24 ratios and rating outcome is very unlikely to be well-approximated by a single set of linear coefficients — credit risk assessment inherently involves threshold effects and interactions (e.g., a debt ratio that's fine at one profitability level becomes dangerous at another) that a linear model structurally cannot represent without manual feature engineering this project doesn't perform.
+Logistic Regression scores **47.95% accuracy** — the worst of all four models by a wide margin, though now above the naive-majority-class baseline of 39.1% (§6.2), unlike an earlier unscaled version of this pipeline which scored 37.3% and fell *below* that baseline. Adding Min-Max scaling (§5.5) closed part of the gap, but a large gap to the tree-based models remains. The most defensible, evidence-grounded remaining explanation is structural, not a preprocessing oversight: the true relationship between these 24 ratios and rating outcome is very unlikely to be well-approximated by a single set of linear coefficients — credit risk assessment inherently involves threshold effects and interactions (e.g., a debt ratio that's fine at one profitability level becomes dangerous at another) that a linear model structurally cannot represent without manual feature engineering this project doesn't perform. `C=100.0`'s very light regularization (see above) is also worth naming as a candidate contributor — it lets the model fit training noise more closely, which is a plausible partial explanation alongside the structural linearity limitation, though this project has not run the controlled experiment (e.g., comparing several `C` values) needed to isolate its individual effect.
 
 ### Why banks still use Logistic-Regression-style models in practice, despite this project's poor result
 
@@ -746,7 +762,7 @@ It is important to be able to hold two ideas at once: Logistic Regression underp
 
 ## 7.2 Decision Tree
 
-**Estimator used:** `sklearn.tree.DecisionTreeClassifier(random_state=42)`. No `max_depth`, `min_samples_leaf`, or other regularization hyperparameter is set — the tree is allowed to grow to whatever depth minimizes training impurity, which is directly relevant to the overfitting discussion below.
+**Estimator used:** `sklearn.tree.DecisionTreeClassifier(random_state=42, criterion="entropy", max_depth=None, min_samples_split=2, min_samples_leaf=1)`, fed through `build_preprocessor(..., scale_numeric=True)` — scaling is harmless but unnecessary for a tree model (§5.5). `criterion="entropy"` is a deliberate departure from scikit-learn's default (`"gini"`) — see below for what that changes in practice. `max_depth=None`, `min_samples_split=2`, and `min_samples_leaf=1` are all scikit-learn's defaults, restated explicitly rather than omitted — so the tree is still allowed to grow to whatever depth minimizes training impurity, which is directly relevant to the overfitting discussion below.
 
 ### Intuition
 
@@ -760,13 +776,13 @@ $$
 \text{Gini} = 1 - \sum_{k=1}^{K} p_k^2
 $$
 
-where $p_k$ is the proportion of class $k$ among the rows at that node. Gini impurity is 0 when a node is perfectly pure (all rows belong to one class) and increases toward its maximum as the classes become more evenly mixed. The alternative criterion, **entropy** (from information theory), measures the same underlying idea — how unpredictable the class label is at that node — via $-\sum_k p_k \log_2 p_k$, and choosing a split that most reduces entropy is called maximizing **information gain**. Gini and entropy usually select very similar splits in practice and rarely change the outcome substantially; scikit-learn defaults to Gini partly because it's marginally cheaper to compute (no logarithm).
+where $p_k$ is the proportion of class $k$ among the rows at that node. Gini impurity is 0 when a node is perfectly pure (all rows belong to one class) and increases toward its maximum as the classes become more evenly mixed. The alternative criterion, **entropy** (from information theory), measures the same underlying idea — how unpredictable the class label is at that node — via $-\sum_k p_k \log_2 p_k$, and choosing a split that most reduces entropy is called maximizing **information gain**. Gini and entropy usually select very similar splits in practice and rarely change the outcome substantially; scikit-learn defaults to Gini partly because it's marginally cheaper to compute (no logarithm). **This project's `DecisionTreeClassifier` explicitly overrides that default and uses `criterion="entropy"`** — a deliberate, if modest, hyperparameter choice rather than an accepted default, though (per the point above) it would not typically be expected to change results dramatically versus Gini on the same data.
 
 The tree keeps splitting recursively — each split producing two purer child nodes — until every leaf is pure, or until a stopping condition (like a maximum depth, which is *not* set here) is reached.
 
 ### Why this project's un-restricted tree is prone to overfitting
 
-**Overfitting**, defined precisely, is when a model fits the training data's specific noise and idiosyncrasies so closely that it fails to generalize to new data — the gap between training performance and test performance widens. Because `DecisionTreeClassifier(random_state=42)` has no depth limit and no minimum-samples-per-leaf constraint here, the tree is free to keep splitting until leaves contain very few (potentially single) training examples, effectively memorizing the training set rather than learning general ratio-to-rating rules. This is the textbook mechanism by which unconstrained decision trees overfit, and it is directly consistent with Decision Tree's mediocre 55.0% test accuracy despite being, structurally, the most flexible single model in the comparison (able to fit almost arbitrarily complex decision boundaries, unlike linear Logistic Regression).
+**Overfitting**, defined precisely, is when a model fits the training data's specific noise and idiosyncrasies so closely that it fails to generalize to new data — the gap between training performance and test performance widens. Because `DecisionTreeClassifier(random_state=42)` has no depth limit and no minimum-samples-per-leaf constraint here, the tree is free to keep splitting until leaves contain very few (potentially single) training examples, effectively memorizing the training set rather than learning general ratio-to-rating rules. This is the textbook mechanism by which unconstrained decision trees overfit, and it is directly consistent with Decision Tree's mediocre 55.5% test accuracy despite being, structurally, the most flexible single model in the comparison (able to fit almost arbitrarily complex decision boundaries, unlike linear Logistic Regression).
 
 ### Advantages
 
@@ -783,13 +799,13 @@ The tree keeps splitting recursively — each split producing two purer child no
 
 ### Why this project's result is what it is
 
-At 55.0% accuracy — the second-worst of the four models — Decision Tree sits below both ensemble methods (Random Forest 68.3%, XGBoost 68.1%) that are explicitly designed to fix exactly the overfitting/high-variance weakness a single unconstrained tree suffers from (§7.3, §8), while still comfortably beating Logistic Regression's 37.3% because it can at least capture non-linear, threshold-based relationships. This ordering — single tree beats a linear model, but loses to tree ensembles — is exactly what standard ML theory predicts, and pointing this out explicitly is a strong signal you understand *why* your results look the way they do, not just *what* the numbers are.
+At 55.5% accuracy — the second-worst of the four models — Decision Tree sits below both ensemble methods (Random Forest 68.5%, XGBoost 69.1%) that are explicitly designed to fix exactly the overfitting/high-variance weakness a single unconstrained tree suffers from (§7.3, §8), while still comfortably beating Logistic Regression's 48.0% because it can at least capture non-linear, threshold-based relationships. This ordering — single tree beats a linear model, but loses to tree ensembles — is exactly what standard ML theory predicts, and pointing this out explicitly is a strong signal you understand *why* your results look the way they do, not just *what* the numbers are.
 
 ---
 
 ## 7.3 Random Forest
 
-**Estimator used:** `sklearn.ensemble.RandomForestClassifier(random_state=42)`. Default of 100 trees (`n_estimators=100` is scikit-learn's default and is not overridden here), unrestricted individual tree depth, default `max_features` (square root of total features per split, the standard classification default).
+**Estimator used:** `sklearn.ensemble.RandomForestClassifier(random_state=42, n_estimators=200, max_depth=20, max_features="log2", min_samples_split=2, min_samples_leaf=1)`, fed through `build_preprocessor(..., scale_numeric=True)` — scaling is harmless but unnecessary for a tree ensemble (§5.5). Three of these are deliberate departures from scikit-learn's defaults: `n_estimators=200` (default 100, so double the trees), `max_depth=20` (default `None`/unrestricted, so each tree now has an explicit depth cap), and `max_features="log2"` (default `"sqrt"` for classification, a narrower per-split feature subset than the default). `min_samples_split=2` and `min_samples_leaf=1` remain at their defaults.
 
 ### Intuition
 
@@ -800,18 +816,18 @@ A Random Forest is an **ensemble** of many individual decision trees, each train
 Two distinct sources of randomness make each tree in the forest different from the others, which is essential — an ensemble of *identical* trees would just reproduce a single tree's weaknesses:
 
 1. **Bootstrap aggregating ("bagging")**: each tree is trained on a random sample of the training rows drawn *with replacement* and the same size as the original training set. Because sampling is with replacement, some rows appear multiple times in a given tree's training sample and others (statistically, about 37% of rows) don't appear at all — this is what makes each tree see a genuinely different training set.
-2. **Random feature subsampling**: at each split within each tree, only a random subset of the available features is considered as candidates for the best split (by default, $\sqrt{n\_features}$ for classification), rather than every feature. This deliberately prevents every tree from being dominated by the single strongest feature at every split, which forces the trees to diversify and discover different, complementary patterns rather than all converging on the same structure.
+2. **Random feature subsampling**: at each split within each tree, only a random subset of the available features is considered as candidates for the best split — scikit-learn's default is $\sqrt{n\_features}$ (`max_features="sqrt"`) for classification, but this project explicitly sets `max_features="log2"`, an even narrower subset per split ($\log_2 n\_features$ instead of $\sqrt{n\_features}$) — rather than every feature. This deliberately prevents every tree from being dominated by the single strongest feature at every split, which forces the trees to diversify and discover different, complementary patterns rather than all converging on the same structure; the narrower `log2` subset pushes this diversification slightly further than the scikit-learn default would.
 
 ### Why averaging many trees reduces overfitting
 
-A single unconstrained decision tree has high **variance** — it fits training noise closely, and that noise differs randomly from one bootstrap sample to another. When you average the predictions of many such high-variance-but-different trees, the noise each individual tree fit tends to cancel out (because it's essentially random and uncorrelated across trees), while the genuine underlying signal — which is present and similar across every bootstrap sample — reinforces itself. This is the direct mathematical reason Random Forest reliably outperforms a single Decision Tree on real-world data, and is exactly what your project's own numbers demonstrate: Random Forest's 68.3% accuracy substantially exceeds the single Decision Tree's 55.0%, using otherwise identical preprocessing and evaluation.
+A single unconstrained decision tree has high **variance** — it fits training noise closely, and that noise differs randomly from one bootstrap sample to another. When you average the predictions of many such high-variance-but-different trees, the noise each individual tree fit tends to cancel out (because it's essentially random and uncorrelated across trees), while the genuine underlying signal — which is present and similar across every bootstrap sample — reinforces itself. This is the direct mathematical reason Random Forest reliably outperforms a single Decision Tree on real-world data, and is exactly what your project's own numbers demonstrate: Random Forest's 68.5% accuracy substantially exceeds the single Decision Tree's 55.5%, using otherwise identical preprocessing and evaluation.
 
 ### Advantages
 
 - Substantially reduces the overfitting/high-variance problem of a single decision tree, as demonstrated directly by this project's own results.
 - Still requires no feature scaling.
 - Provides a natural feature-importance ranking (by how much each feature reduces impurity across all trees and splits) — a lighter-weight alternative to SHAP (§11) available "for free" from the fitted model.
-- Generally robust and a strong default choice across many tabular ML problems without much tuning — which matters directly here, since **no hyperparameter tuning was performed** (§9) and Random Forest still achieved the joint-best accuracy in this project.
+- Generally robust and a strong choice across many tabular ML problems even without extensive tuning — Random Forest's own hyperparameters here (`n_estimators=200`, `max_depth=20`, `max_features="log2"`, §9) received comparatively light, undocumented adjustment relative to the dedicated ablation study behind XGBoost's tuning (§9.7), yet it still lands close behind XGBoost as the second-best model overall.
 
 ### Limitations
 
@@ -821,15 +837,15 @@ A single unconstrained decision tree has high **variance** — it fits training 
 
 ### Why it performs well here, precisely
 
-Random Forest achieves the **joint-highest weighted-F1 in this project (0.6705, essentially tied with XGBoost's 0.6709)** and the highest raw accuracy (68.3%, marginally ahead of XGBoost's 68.1%) among all four models, without any hyperparameter tuning, purely from its default ensemble structure correcting the single Decision Tree's overfitting. This makes a strong, evidence-based talking point: *"even with zero tuning, ensembling alone recovered the largest single jump in performance in this comparison — from 55.0% (one tree) to 68.3% (a forest of trees) — which is a direct, textbook demonstration of variance reduction through bagging."*
+Random Forest reaches **68.5% accuracy and 0.6735 weighted F1 — the second-best of all four models on both metrics, behind only XGBoost (69.1% / 0.6833)** — driven largely by its ensemble structure correcting the single Decision Tree's overfitting, plus the additional trees and depth cap from its own hyperparameter adjustment (§9). This makes a strong, evidence-based talking point: *"ensembling alone recovered the largest single jump in performance in this comparison — from 55.5% (one tree) to 68.5% (a forest of trees) — which is a direct, textbook demonstration of variance reduction through bagging, and it gets Random Forest to within about half a point of XGBoost's more heavily, deliberately tuned result."*
 
 ---
 
 ## 7.4 XGBoost (Introduced Here — Full Masterclass in §8)
 
-**Estimator used:** `xgboost.XGBClassifier(random_state=42, eval_metric="mlogloss")`. All boosting-specific hyperparameters (learning rate, tree depth, number of boosting rounds, regularization terms) are left at XGBoost's library defaults — no tuning was performed (§9).
+**Estimator used:** `xgboost.XGBClassifier(random_state=42, eval_metric="mlogloss", n_estimators=200, max_depth=5, learning_rate=0.1, subsample=0.8, colsample_bytree=1.0)`, fed through `build_preprocessor(..., scale_numeric=False)` — the one model deliberately *not* scaled, since tree splits are scale-invariant (§5.5). Unlike the other three models, these hyperparameters are not ad hoc: they match the best configuration found by a documented `GridSearchCV` search over `n_estimators`, `max_depth`, `learning_rate`, `subsample`, and `colsample_bytree` in `notebook/xgboost/xgboost.ipynb`'s "Experiment 7: Hyperparameter Tuning" cell (§9.7), which is the strongest evidence-backed hyperparameter choice among all four production models in this project.
 
-XGBoost achieved **68.1% accuracy and 0.6709 weighted F1 — statistically indistinguishable from Random Forest's 68.3%/0.6705** on this dataset, but with the **best macro-F1 of all four models (0.567 vs Random Forest's 0.552)**, meaning XGBoost's performance is more evenly distributed *across* the four classes rather than being propped up almost entirely by strong performance on the large classes — a meaningful distinction explored fully with the macro-vs-weighted-F1 concept in §10. Given the shared depth of material on gradient boosting, the complete treatment of *how* XGBoost works, why it differs fundamentally from Random Forest despite both being tree ensembles, and why it is the most widely used tabular ML algorithm in industry and competitions, is given its own dedicated chapter next.
+XGBoost achieves **69.1% accuracy and 0.6833 weighted F1 — now clearly the best of all four models on both metrics**, not just statistically close to Random Forest as an earlier, untuned version of this pipeline showed. It also keeps the **best macro-F1 of all four models (0.6032 vs Random Forest's 0.5549)**, meaning XGBoost's performance is more evenly distributed *across* the four classes rather than being propped up almost entirely by strong performance on the large classes — a meaningful distinction explored fully with the macro-vs-weighted-F1 concept in §10. Given the shared depth of material on gradient boosting, the complete treatment of *how* XGBoost works, why it differs fundamentally from Random Forest despite both being tree ensembles, and why it is the most widely used tabular ML algorithm in industry and competitions, is given its own dedicated chapter next.
 
 ---
 
@@ -894,11 +910,11 @@ New trees are trained to fit these gradients (approximately, the direction of st
 
 **Why it exists ("shrinkage").** If each new tree were added at full strength, the model could overcorrect wildly based on a single tree's read of the current residuals, especially early in training when residuals are large and noisy. Shrinking each tree's contribution forces the model to take many small, cautious steps toward the solution rather than a few large, unstable ones — trading more boosting rounds for a smoother, more reliable convergence path, and, importantly, acting as a **regularizer**: a lower learning rate generally reduces overfitting (at the cost of needing more trees/rounds to reach the same level of fit).
 
-**This project uses XGBoost's library default** (`learning_rate`/`eta` is not explicitly set in `train_models.py`), so no tuning of this specific trade-off was performed — see §9.
+**This project now sets `learning_rate=0.1` explicitly** in `train_models.py` (down from XGBoost's library default of 0.3) — a genuine, deliberate tuning choice for this trade-off, sourced from the `GridSearchCV` search documented in §9.7, rather than an inherited default.
 
 ## 8.6 Tree Depth, Gamma, Subsample, Colsample, Lambda, Alpha — The Regularization Toolkit
 
-These are the specific hyperparameters that control how aggressively XGBoost's individual trees can fit, and how much regularization (penalty against complexity, to fight overfitting) is applied. **None of them are explicitly tuned in this project** — all are left at XGBoost's library defaults — but you must be able to define each one, because "what hyperparameters would you tune, and why" is close to a guaranteed question.
+These are the specific hyperparameters that control how aggressively XGBoost's individual trees can fit, and how much regularization (penalty against complexity, to fight overfitting) is applied. **In production (`train_models.py`), `max_depth` (5, down from the default 6) and `subsample` (0.8, down from the default 1.0) are now explicitly tuned; `colsample_bytree` is explicitly set to 1.0, which happens to match its own default; `gamma`, `lambda`, and `alpha` remain at their library defaults in production.** The notebook's ablation study (§9.7) does additionally search `gamma`, `reg_alpha`, and `reg_lambda` for XGBoost, but that specific 8-parameter search's winning values were not the ones carried into `train_models.py` — the production model uses the narrower 5-parameter `GridSearchCV` result from the notebook's Experiment 7 instead (§9.7 explains why these two searches can legitimately disagree). You must be able to define each one below, because "what hyperparameters would you tune, and why" is close to a guaranteed question.
 
 
 | Parameter                                                                | What it controls                                                                                        | Why it matters                                                                                                                                                                                                                                                 | Default                |
@@ -923,7 +939,7 @@ These are the specific hyperparameters that control how aggressively XGBoost's i
 - Random Forest: reduces the Decision Tree's variance via bagging/averaging, without meaningfully increasing bias — this is precisely why it improves on a single tree.
 - XGBoost: reduces variance via a *different* mechanism — sequential, regularized, shrinkage-controlled correction rather than parallel averaging — while its use of many shallow weak learners keeps bias low by being able to represent complex, non-linear, interaction-heavy patterns cumulatively across boosting rounds.
 
-Both ensemble methods (Random Forest, XGBoost) land in a favourable region of this tradeoff relative to the two non-ensemble models, which is exactly what your project's results show (68%+ accuracy for both ensembles vs. 55% and 37% for the standalone models).
+Both ensemble methods (Random Forest, XGBoost) land in a favourable region of this tradeoff relative to the two non-ensemble models, which is exactly what your project's results show (68–69% accuracy for both ensembles vs. 55.5% for Decision Tree and 48.0% for Logistic Regression).
 
 ## 8.8 Feature Importance and Split Gain
 
@@ -933,7 +949,7 @@ XGBoost natively tracks, for every feature, the total **gain** — the cumulativ
 
 **What early stopping is.** During training, you monitor the model's loss on a held-out validation set after each new boosting round; if the validation loss stops improving (or starts getting worse — a sign of the model beginning to overfit the training residuals) for a specified number of consecutive rounds, training halts before reaching the maximum configured number of rounds, and the best-performing round's model is kept. **Why it exists:** boosting adds trees indefinitely by default, and past some point, additional trees stop capturing genuine signal and start fitting training-set noise (overfitting) — early stopping is boosting's primary defence against this, functioning much like a dynamically-chosen stopping depth rather than a fixed one.
 
-**This project does not use early stopping** — `XGBClassifier(random_state=42, eval_metric="mlogloss")` is trained for its default fixed number of boosting rounds (`n_estimators`, default 100 in scikit-learn-API XGBoost) with no `eval_set` or `early_stopping_rounds` passed to `.fit()`, and no validation set is held aside for this purpose in the current pipeline (§5.8 already notes the absence of a validation set generally). This is a concrete, fair thing to name as a "given more time" improvement.
+**Production (`train_models.py`) does not use early stopping** — the deployed `XGBClassifier` is trained for a fixed, explicitly-set `n_estimators=200` with no `eval_set` or `early_stopping_rounds` passed to `.fit()`, and no validation set is held aside for this purpose (§5.8). The notebook's ablation study (§9.7) *did* test early stopping in isolation (`n_estimators=1000`, `early_stopping_rounds=20`, a 15%-of-`X_train` validation slice) and found it **underperformed both the untuned baseline and its own fair `n_estimators=1000`-no-stopping comparison point** — stopping at iteration 20 was too aggressive for that particular validation slice size, so the technique wasn't dropped for lack of trying, it was tried and the specific configuration tested didn't help. This is a concrete, fair thing to name as a "given more time" improvement — the ablation summary itself suggests a larger patience value or a lower learning rate as the next experiment.
 
 ## 8.10 Missing Value Handling — A Genuine Built-In XGBoost Advantage
 
@@ -941,13 +957,13 @@ One of XGBoost's most-cited practical advantages is that it has **built-in handl
 
 ## 8.11 Why XGBoost Performs Well and Is So Widely Used
 
-Bringing the whole chapter together: XGBoost combines (1) the general power of tree ensembles to capture non-linear, interaction-heavy relationships without manual feature engineering, (2) a principled, second-order-gradient-informed sequential correction mechanism that tends to converge to a stronger fit than independent bagging alone for a similar model size, (3) an extensive built-in regularization toolkit (`gamma`, `lambda`, `alpha`, subsampling) purpose-built to control the very overfitting risk that sequential, corrective training would otherwise be prone to, and (4) engineering optimizations (parallelized split-finding, cache-aware computation, native missing-value handling) that make it fast enough to be practical at scale. This combination is why it consistently performs at or near the top of tabular ML benchmarks and competitions, and why — even completely untuned, as in this project — it matched or slightly exceeded Random Forest and produced the best macro-F1 of any model tested (0.567).
+Bringing the whole chapter together: XGBoost combines (1) the general power of tree ensembles to capture non-linear, interaction-heavy relationships without manual feature engineering, (2) a principled, second-order-gradient-informed sequential correction mechanism that tends to converge to a stronger fit than independent bagging alone for a similar model size, (3) an extensive built-in regularization toolkit (`gamma`, `lambda`, `alpha`, subsampling) purpose-built to control the very overfitting risk that sequential, corrective training would otherwise be prone to, and (4) engineering optimizations (parallelized split-finding, cache-aware computation, native missing-value handling) that make it fast enough to be practical at scale. This combination is why it consistently performs at or near the top of tabular ML benchmarks and competitions, and this project's own results now show it directly: with its hyperparameters tuned via the documented `GridSearchCV` search in §9.7, XGBoost is the outright best model on every headline metric (69.1% accuracy, 0.6833 weighted F1, 0.6032 macro F1 — see §10.1), a clearer and more evidence-backed lead than an earlier, untuned version of this pipeline showed.
 
 ## 8.12 XGBoost's Advantages and Limitations, Summarized
 
 **Advantages:** typically state-of-the-art or near-state-of-the-art accuracy on structured/tabular data; extensive, fine-grained regularization control; native missing-value handling; built-in feature importance; fast, parallelized training implementation; generally robust even with minimal tuning, as demonstrated directly by this project.
 
-**Limitations:** far less directly interpretable than Logistic Regression or a single small Decision Tree — understanding *why* it made a specific prediction requires a supplementary tool like SHAP (§11), not a simple readable coefficient list; has more hyperparameters than simpler models, meaning it has more *potential* to be misconfigured or to require tuning effort to reach its best performance (which this project did not invest, §9); sequential-by-construction training is inherently less trivially parallelizable across trees than bagging is (though XGBoost heavily parallelizes *within* each tree's construction to compensate); like all ensemble tree methods, it does not inherently correct for class imbalance (§6) — its strong macro-F1 relative to Random Forest here reflects better *overall* balance across classes, not immunity to the imbalance problem, as the Distressed-class recall of only 14% (§6.4) still shows.
+**Limitations:** far less directly interpretable than Logistic Regression or a single small Decision Tree — understanding *why* it made a specific prediction requires a supplementary tool like SHAP (§11), not a simple readable coefficient list; has more hyperparameters than simpler models, meaning it has more *potential* to be misconfigured, and reaching its best performance did require dedicated tuning effort here (§9.7), unlike a model that performs adequately near its defaults; sequential-by-construction training is inherently less trivially parallelizable across trees than bagging is (though XGBoost heavily parallelizes *within* each tree's construction to compensate); like all ensemble tree methods, it does not inherently correct for class imbalance (§6) — its strong macro-F1 relative to Random Forest here reflects better *overall* balance across classes, not immunity to the imbalance problem, as the Distressed-class recall of only 23% (5/22, §6.4) still shows, and the notebook ablation's `sample_weight`-based fix for this (§6.3, §9.7) has not yet been carried into the production model.
 
 ## 8.13 Why XGBoost Fits This Specific Project
 
@@ -959,18 +975,26 @@ Tabular, structured, moderate-sized data with a mix of numeric ratios and one ca
 
 ## 9.1 What Actually Happened — State This Plainly First
 
-Confirmed by direct inspection of `train_models.py`: every model is constructed with **only `random_state` set** (plus `max_iter=2000` for Logistic Regression, needed simply so its optimizer has enough iterations to converge rather than as a tuning choice, and `eval_metric="mlogloss"` for XGBoost, which selects the loss function rather than tuning model complexity):
+An earlier version of this project constructed every model with only `random_state` set (plus `max_iter` for Logistic Regression's optimizer and `eval_metric` for XGBoost's loss function) — no hyperparameter tuning at all. **That is no longer true.** Confirmed by direct inspection of the current `train_models.py`, all four models now carry explicit, non-default hyperparameters:
 
 ```python
 models = {
-    "decision_tree": DecisionTreeClassifier(random_state=42),
-    "random_forest": RandomForestClassifier(random_state=42),
-    "logistic_regression": LogisticRegression(random_state=42, max_iter=2000),
-    "xgboost": XGBClassifier(random_state=42, eval_metric="mlogloss"),
+    "decision_tree": DecisionTreeClassifier(
+        random_state=42, criterion="entropy", max_depth=None,
+        min_samples_split=2, min_samples_leaf=1),
+    "random_forest": RandomForestClassifier(
+        random_state=42, n_estimators=200, max_depth=20,
+        max_features="log2", min_samples_split=2, min_samples_leaf=1),
+    "logistic_regression": LogisticRegression(
+        random_state=42, max_iter=2000, C=100.0,
+        class_weight=None, penalty="l2", solver="lbfgs"),
+    "xgboost": XGBClassifier(
+        random_state=42, eval_metric="mlogloss", n_estimators=200,
+        max_depth=5, learning_rate=0.1, subsample=0.8, colsample_bytree=1.0),
 }
 ```
 
-**No hyperparameter search of any kind — grid search, random search, or Bayesian optimization via Optuna — is present anywhere in this codebase.** Every model runs with its library's out-of-the-box default configuration. This is the single most consequential "not implemented" fact in the whole project, and you should lead with it directly rather than let an evaluator "discover" it: *"All four models use their library defaults; I did not perform hyperparameter tuning. Given the project's timeframe, I prioritized building a correct, leakage-free, reproducible baseline pipeline across four different algorithm families over optimizing any single one of them."* That is a legitimate scoping decision, and it is much stronger stated upfront than found and challenged.
+**Grid search and random search are both present in this codebase — inside `notebook/xgboost/xgboost.ipynb`, not `train_models.py` directly.** `RandomizedSearchCV` and `GridSearchCV` (§9.3–§9.4) are used to search XGBoost's hyperparameters, and the resulting best configuration was then hand-copied into `train_models.py`'s `XGBClassifier` constructor (§9.7 has the full story, including a documented interaction-effect finding worth knowing). **Bayesian optimization via Optuna is still not used anywhere** (§9.5 remains accurate on that specific point). **Decision Tree, Random Forest, and Logistic Regression's hyperparameters are also no longer library defaults, but — unlike XGBoost — there is no corresponding documented search, notebook cell, or ablation study behind *why* these specific values (`criterion="entropy"`; `n_estimators=200, max_depth=20, max_features="log2"`; `C=100.0`) were chosen.** If asked, the honest answer is: "XGBoost's hyperparameters come from a documented `GridSearchCV` search you can point an examiner to in the notebook; the other three models' hyperparameters were set directly in `train_models.py` without an equivalent documented search — that asymmetry is itself worth naming as a methodology gap, not concealing."
 
 ## 9.2 Hyperparameters vs. Parameters — The Core Distinction
 
@@ -1008,14 +1032,31 @@ models = {
 
 **Why Optuna would have been a reasonable choice, had it been used.** It is efficient (fewer wasted trials than grid search), integrates natively with XGBoost and scikit-learn, and its pruning feature is particularly valuable for boosting models specifically, since a bad combination of learning rate and tree count often reveals itself as clearly underperforming well before training finishes, letting pruning save substantial compute — a natural pairing with the XGBoost model this project already includes.
 
-**Why this project didn't use it — an honest framing, not an excuse.** No hyperparameter search library is in `requirements.txt`, and no search loop exists in any script or notebook. The most defensible statement you can make is that hyperparameter tuning was out of scope given the project's time budget, and that a well-configured default (which, per §7.3 and §7.4, both ensemble methods handled reasonably) was judged an acceptable trade-off relative to the effort of properly setting up a leakage-safe tuning loop with an appropriate validation strategy.
+**Why this project didn't use it — an honest framing, not an excuse.** `optuna` is not in `requirements.txt`, and no Optuna trial loop exists in any script or notebook — only scikit-learn's `GridSearchCV`/`RandomizedSearchCV` (§9.1, §9.7) were used, and only for XGBoost. The most defensible statement you can make is: *"I used scikit-learn's own grid/random search rather than adding a new dependency, since the search space for XGBoost was small enough (§9.7) that Optuna's main advantage — efficient search over much larger spaces via pruning — wasn't the binding constraint. A larger, continuous search space, or the same search extended to the other three models, would be where Optuna's adaptive sampling would start to pay off."*
 
-## 9.6 What Each Model's Untuned Defaults Mean Concretely, Model by Model
+## 9.6 What Each Model's Current Hyperparameters Mean Concretely, Model by Model
 
-- **Logistic Regression**: default `C=1.0` (moderate L2 regularization strength) and `penalty="l2"` — untuned, but Logistic Regression's failure mode here (§7.1) is dominated by the missing feature-scaling step, not primarily by this specific hyperparameter, so tuning `C` alone would likely have limited impact without first addressing scaling.
-- **Decision Tree**: no `max_depth`/`min_samples_leaf` constraint — as discussed in §7.2, this is the single hyperparameter most likely to have improved this specific model if tuned, since it directly targets the overfitting that's the most plausible explanation for its middling 55.0% accuracy.
-- **Random Forest**: default `n_estimators=100`, no `max_depth` limit on individual trees — tuning `n_estimators` upward, or constraining `max_features`/`max_depth`, could plausibly extract further performance, though the model already performs competitively untuned.
-- **XGBoost**: default `learning_rate=0.3` (fairly aggressive), default `max_depth=6`, default `n_estimators=100`, no early stopping (§8.9) — of the four models, XGBoost arguably has the most hyperparameter "headroom" left unexplored, given how many of the regularization levers in §8.6 remain at their defaults; a modest Optuna search over `learning_rate`, `max_depth`, `subsample`, and `n_estimators` (with early stopping against a validation fold) is the single most concrete, well-targeted "future work" item you can propose for this project.
+- **Logistic Regression**: `C=100.0` (very weak L2 regularization — a large departure from the default `C=1.0`) plus `penalty="l2"` (default) — this is a genuine tuning choice, but it is undocumented in the sense that no search script or notebook cell shows *how* `C=100.0` specifically was arrived at. Logistic Regression's remaining weakness here (§7.1) is now more plausibly structural (a fundamentally linear model on a non-linear problem) than purely a preprocessing/hyperparameter oversight, since scaling (§5.5) has since been added.
+- **Decision Tree**: `criterion="entropy"` (departure from default `"gini"`), still no `max_depth`/`min_samples_leaf` constraint — as discussed in §7.2, an explicit depth/leaf-size limit remains the single hyperparameter most likely to further improve this specific model, since it directly targets the overfitting that's the most plausible explanation for its still-middling 55.5% accuracy; changing the split criterion alone does not address that.
+- **Random Forest**: `n_estimators=200` (up from the default 100), `max_depth=20` (down from unrestricted), `max_features="log2"` (narrower than the default `"sqrt"`) — all three are genuine departures from scikit-learn's defaults and plausibly explain some of Random Forest's improvement, though — like Logistic Regression's `C=100.0` — there is no documented search behind these specific values.
+- **XGBoost**: `learning_rate=0.1` (down from the aggressive default 0.3), `max_depth=5` (down from 6), `n_estimators=200` (up from 100), `subsample=0.8` (down from 1.0), `colsample_bytree=1.0` (unchanged from default) — all five values are the direct, documented output of a `GridSearchCV` search over exactly this grid (§9.7), making XGBoost the one model in this project whose hyperparameters you can trace to a specific, reproducible experiment rather than a manually-chosen value. `gamma`, `reg_lambda`, and `reg_alpha` remain at their library defaults in production despite being searched in the notebook's wider ablation grid (§9.7) — that specific 8-parameter search's winner was not the one carried into `train_models.py`.
+
+## 9.7 The Actual Tuning Work Behind This Project's XGBoost Model
+
+This is the one place in the project where hyperparameter tuning is fully documented, reproducible, and traceable to a specific artifact — `notebook/xgboost/xgboost.ipynb` and its companion report, `outputs/xgboost_ablation_summary.md`. You should be able to walk an examiner through this section from memory; it is your strongest, most concrete evidence of methodological rigor in the whole project.
+
+**Two separate searches exist, and you must be able to distinguish them:**
+
+1. **The ablation study's "Hyperparameter tuning only" step** (`RandomizedSearchCV`, 40 candidate configurations, 5-fold stratified CV, scored on accuracy) searches 8 parameters (`n_estimators`, `learning_rate`, `max_depth`, `subsample`, `colsample_bytree`, `reg_alpha`, `reg_lambda`, `gamma`) in isolation, purely to measure how much hyperparameter tuning *alone* contributes relative to five other single-technique changes (class-imbalance handling via `sample_weight`, early stopping, `tree_method="hist"`, and a final combination of the winning changes). Its winning configuration (`n_estimators=200, max_depth=6, learning_rate=0.1, subsample=0.8, colsample_bytree=0.9, reg_alpha=0.1, reg_lambda=2.0, gamma=0.1`) is **not** the configuration deployed in production.
+2. **Experiment 7's "Hyperparameter Tuning" cell** (`GridSearchCV`, an exhaustive 2⁵=32-combination grid over `n_estimators`, `max_depth`, `learning_rate`, `subsample`, `colsample_bytree`, 5-fold stratified CV, scored on accuracy) is the search whose winning configuration — `n_estimators=200, max_depth=5, learning_rate=0.1, subsample=0.8, colsample_bytree=1.0` — **is** the one now hard-coded into `train_models.py`'s `XGBClassifier`. Experiment 8 repeats the identical grid on Min-Max-normalized features, for a separate comparison (see below).
+
+**Why these two searches can legitimately disagree** (a fair question an evaluator might ask): different search method (random sampling of 40 combinations vs. exhaustive search of a smaller 32-combination grid), different search space (8 parameters vs. 5), and `RandomizedSearchCV`'s own run-to-run non-determinism under `n_jobs=-1` parallelism (documented explicitly in `outputs/xgboost_ablation_summary.md` §12) — the ablation study's own report notes its Step 2 configuration changed between runs even with `random_state` fixed, though its *qualitative* conclusions held steady.
+
+**The ablation study's headline finding — an interaction effect, not just "tuning helps":** the ablation study tested hyperparameter tuning and class-imbalance handling (`sample_weight="balanced"`) both individually and combined. Individually, tuning alone reached 0.6814 accuracy / 0.5850 macro F1, and imbalance handling alone reached 0.6732 accuracy / **0.5890 macro F1 (its best result on the Distressed class specifically, F1 0.3158)**. **Combined, the two changes together underperformed both individually** on macro F1 (0.5718) and Distressed F1 (0.2581) — clear, measured evidence that the two changes interact rather than stacking additively. This is a substantially stronger, more specific answer than "I tuned hyperparameters and it helped" if an evaluator asks about your methodology — it demonstrates you tested combinations rather than assuming individual wins compose.
+
+**Min-Max normalization's effect on XGBoost specifically was also tested and found negligible**, as expected for a tree-based model (§5.5): Experiment 7 (raw features, tuned) reached 0.6749 test accuracy; Experiment 8 (Min-Max features, tuned) reached 0.6782 — a ~0.3-point difference well within run-to-run noise, and both experiments converged on the same best hyperparameters. This is a deliberate, useful confirmation of a theoretical prediction (§5.5), not a wasted experiment.
+
+**What has *not* been carried from the notebook into production, and is worth naming proactively:** the `sample_weight`-based imbalance handling that was the ablation study's best individual step for Distressed-class performance is not in `train_models.py`'s `XGBClassifier` construction (§6.3, §6.4) — only the hyperparameter tuning was productionized. Given the interaction effect finding above, naively adding `sample_weight` on top of the current tuned hyperparameters without re-running the search jointly is exactly the kind of change the ablation study's own results warn could underperform both individually-good pieces — a legitimate, evidence-grounded reason to flag this as "next experiment," not "obvious missing feature."
 
 ---
 
@@ -1026,12 +1067,12 @@ models = {
 
 | Model               | Accuracy   | Weighted F1 | Macro F1   |
 | ------------------- | ---------- | ----------- | ---------- |
-| Decision Tree       | 0.5501     | 0.5498      | 0.4964     |
-| Random Forest       | **0.6831** | 0.6705      | 0.5522     |
-| Logistic Regression | 0.3727     | 0.2422      | 0.1604     |
-| XGBoost             | 0.6814     | **0.6709**  | **0.5669** |
+| Decision Tree       | 0.5550     | 0.5512      | 0.4620     |
+| Random Forest       | 0.6847     | 0.6735      | 0.5549     |
+| Logistic Regression | 0.4795     | 0.4617      | 0.3799     |
+| XGBoost             | **0.6913** | **0.6833**  | **0.6032** |
 
-All four numbers for every model are computed identically, by `evaluate_predictions()` in `common.py`, on the **same held-out 609-row stratified test set** (§5.8) — this consistency is what makes the comparison meaningful, and is worth stating explicitly if asked "is this a fair comparison across models."
+All four numbers for every model are computed identically, by `evaluate_predictions()` in `common.py`, on the **same held-out 609-row stratified test set** (§5.8) — this consistency is what makes the comparison meaningful, and is worth stating explicitly if asked "is this a fair comparison across models." XGBoost is now, unambiguously, the best of the four models on every one of these three headline metrics (§7.4, §9.7) — an earlier, untuned version of this pipeline had Random Forest narrowly ahead on raw accuracy, but that is no longer the case.
 
 ## 10.2 Accuracy
 
@@ -1041,7 +1082,7 @@ All four numbers for every model are computed identically, by `evaluate_predicti
 
 **Advantages:** simple, intuitive, universally understood by non-technical stakeholders.
 
-**Limitations:** as established at length in §6.2, accuracy treats all classes as equally important and all errors as equally costly, which is precisely wrong for an imbalanced problem where the rare class (`Distressed`) is arguably the *most* business-critical one to get right. A model can post a respectable-looking accuracy while being nearly useless on the class that matters most — exactly what happens with Random Forest and XGBoost here (68%+ overall accuracy, but only 9–14% recall on Distressed, §6.4).
+**Limitations:** as established at length in §6.2, accuracy treats all classes as equally important and all errors as equally costly, which is precisely wrong for an imbalanced problem where the rare class (`Distressed`) is arguably the *most* business-critical one to get right. A model can post a respectable-looking accuracy while being nearly useless on the class that matters most — exactly what happens with Random Forest and XGBoost here (68–69% overall accuracy, but only 9–23% recall on Distressed, §6.4).
 
 **Business interpretation:** "out of 100 companies this model rates, roughly how many does it place in the correct one of four risk buckets" — a reasonable headline number, but one that must always be paired with per-class metrics before being trusted for a business decision.
 
@@ -1075,7 +1116,7 @@ All four numbers for every model are computed identically, by `evaluate_predicti
 
 **Weighted F1:** compute F1 independently for each class, then average them **weighted by each class's support (number of true examples)**: $\text{Weighted F1} = \sum_k \frac{n_k}{N} F1_k$. **Large classes dominate the average.**
 
-**Why this distinction is the single most important evaluation concept for this specific project.** Look again at the results table: Random Forest's macro F1 (0.5522) is noticeably *lower* than its weighted F1 (0.6705) — a gap of 0.118. XGBoost's gap is smaller (0.5669 vs 0.6709, a gap of 0.104), but still substantial. **This gap is direct, quantitative proof that both models perform considerably worse on the rare classes than on the common ones** — weighted F1 is inflated by strong performance on Speculative/Investment-Low/Investment-High (which dominate the support-weighted average), while macro F1 exposes the true, unweighted picture including the poor Distressed performance. **XGBoost's smaller gap (0.104 vs Random Forest's 0.118) is exactly why XGBoost has the best macro F1 despite Random Forest having marginally higher raw accuracy and weighted F1** — XGBoost's performance is more evenly spread across classes, which is precisely the property you'd want in a genuinely fair credit-risk model, and is the strongest evidence-based argument for preferring XGBoost as "the best model" in this project over Random Forest, despite the latter's marginally higher headline accuracy. This is one of the highest-value insights in this entire document — make sure you can explain it fluently and unprompted.
+**Why this distinction is the single most important evaluation concept for this specific project.** Look again at the results table: Random Forest's macro F1 (0.5549) is noticeably *lower* than its weighted F1 (0.6735) — a gap of 0.119. XGBoost's gap is smaller (0.6032 vs 0.6833, a gap of 0.080), but still substantial. **This gap is direct, quantitative proof that both models perform considerably worse on the rare classes than on the common ones** — weighted F1 is inflated by strong performance on Speculative/Investment-Low/Investment-High (which dominate the support-weighted average), while macro F1 exposes the true, unweighted picture including the poor Distressed performance. **XGBoost's smaller gap (0.080 vs Random Forest's 0.119) is one reason XGBoost's lead is not just a headline-accuracy story** — XGBoost's performance is more evenly spread across classes, which is precisely the property you'd want in a genuinely fair credit-risk model. Unlike an earlier, untuned version of this pipeline, XGBoost no longer needs this argument to justify preferring it over Random Forest — it now also leads on raw accuracy and weighted F1 outright (§10.1) — but the smaller macro/weighted gap remains a genuinely stronger, more specific reason *why* it's the better model, not just *that* it is. This is one of the highest-value insights in this entire document — make sure you can explain it fluently and unprompted.
 
 ## 10.7 Confusion Matrix
 
@@ -1115,7 +1156,7 @@ All four numbers for every model are computed identically, by `evaluate_predicti
 
 ## 10.12 Reading This Project's Results Honestly, One Paragraph You Should Be Able to Give Verbatim
 
-*"XGBoost and Random Forest both reach roughly 68% accuracy, meaningfully outperforming a single Decision Tree (55%) and dramatically outperforming Logistic Regression (37%, which is actually below the naive majority-class baseline of 39%). XGBoost has the best macro F1 (0.567 vs Random Forest's 0.552), meaning its performance is more evenly spread across all four rating buckets rather than being propped up by the large classes — which is why I'd nominate XGBoost, not Random Forest, as the strongest model in this comparison despite its marginally lower raw accuracy. That said, every single model — including XGBoost — performs poorly on the Distressed class specifically, which is exactly the class a real lender would care most about, and this is a direct, expected consequence of severe class imbalance (only 22 of 609 test examples) that I did not correct for with techniques like class weighting or SMOTE. I also did not compute ROC-AUC, calibration metrics, or a cost-sensitive evaluation, all of which would give a more complete picture of whether this model is actually fit for a real lending decision, as opposed to fit for a standard multi-class ML benchmark."*
+*"XGBoost is the best of my four models on every headline metric — 69.1% accuracy, 0.6833 weighted F1, and 0.6032 macro F1 — with Random Forest close behind at 68.5% accuracy, and both ensembles meaningfully outperforming a single Decision Tree (55.5%) and Logistic Regression (48.0%, which is now above the naive majority-class baseline of 39%, though it remains the weakest model overall). XGBoost's hyperparameters are the one set in this project backed by a documented `GridSearchCV` search, which is part of why I trust this result more than a raw number comparison alone — its macro F1 lead over Random Forest is also driven by a smaller macro/weighted F1 gap (0.080 vs Random Forest's 0.119), meaning its performance is more evenly spread across all four rating buckets, not just propped up by the large classes. That said, every single model — including XGBoost — still performs poorly on the Distressed class specifically, which is exactly the class a real lender would care most about: XGBoost's own ablation study found that `sample_weight`-based class-imbalance handling was actually the single best technique for that class, but that finding hasn't been carried into the production model, and combining it naively with the current tuned hyperparameters isn't guaranteed to work, since the same study found tuning and imbalance-handling interact rather than stack. I also did not compute ROC-AUC, calibration metrics, or a cost-sensitive evaluation, all of which would give a more complete picture of whether this model is actually fit for a real lending decision, as opposed to fit for a standard multi-class ML benchmark."*
 
 ---
 
@@ -1246,7 +1287,7 @@ Crucially: **this SHAP analysis exists only inside the four Jupyter notebooks, f
 
 **A subtlety worth knowing cold:** `label_encoder.fit(CLASS_ORDER)` — fitting the encoder on the fixed constant list, not on `y` — is a deliberately careful choice. If it had instead been `label_encoder.fit(target_labels)` (fit on whatever labels are actually present in this run's data), the *numeric* codes assigned to each class name could shift between different training runs or different datasets (e.g., "Distressed" might be code 0 in one run and code 3 in another, depending on what order labels first appear), which would make trained artifacts from different runs incompatible with each other in subtle, hard-to-debug ways. Fixing the encoder to the constant `CLASS_ORDER` guarantees the same class always gets the same numeric code, every time, across every run and every model. This is a genuinely well-thought-out piece of the codebase, and naming it unprompted is a strong signal of deep code comprehension.
 
-**Possible improvements:** no cross-validation (§5.8), no hyperparameter tuning (§9), no imbalance correction (§6), training and evaluation logic for all four models is duplicated in structure (though correctly factored through the shared `train_single_model` function) rather than run in parallel (they run sequentially in a `for` loop, which is fine at this dataset size but wouldn't scale gracefully to a much larger dataset or many more model types without parallelization).
+**Possible improvements:** no cross-validation used for the final reported numbers (§5.8, though the notebook's `GridSearchCV`/`RandomizedSearchCV` do use it internally, §9), hyperparameter tuning is documented for XGBoost only, not the other three models (§9.7), no imbalance correction reaches production even though a working fix was found in the notebook (§6, §9.7), training and evaluation logic for all four models is duplicated in structure (though correctly factored through the shared `train_single_model` function) rather than run in parallel (they run sequentially in a `for` loop, which is fine at this dataset size but wouldn't scale gracefully to a much larger dataset or many more model types without parallelization).
 
 ## 12.3 `python/predict.py` — The Prediction Entry Point
 
@@ -1533,7 +1574,7 @@ Covered in full in §11. Listed in `requirements.txt` and imported in all four n
 
 **Underfitting** — a model too simple to capture the true underlying pattern in the data; see also Bias.
 
-**Validation Set** — a data partition used to tune model choices without touching the final test set; not used in this project, since no tuning is performed (§5.8).
+**Validation Set** — a data partition used to tune model choices without touching the final test set; `train_models.py`/`predict.py` have no separate one (§5.8), though the XGBoost tuning notebook does use proper cross-validation within `X_train` for its searches (§9.7).
 
 **Variance (statistical/ML sense)** — error from a model being overly sensitive to the specific training sample's noise; see also Overfitting (§8.7).
 
@@ -1566,10 +1607,10 @@ Each entry: **Q**, then a strong answer, then the common mistake weaker candidat
 
 ## B. Statistics and Probability (13–24)
 
-13. **What is the naive baseline accuracy for this test set, and how does each model compare?** Always guessing the majority class (Speculative, 39.1%) gives 39.1% baseline accuracy; Logistic Regression (37.3%) is actually *below* this baseline; Decision Tree (55.0%), Random Forest (68.3%), and XGBoost (68.1%) all beat it (§6.2, §10.1).
+13. **What is the naive baseline accuracy for this test set, and how does each model compare?** Always guessing the majority class (Speculative, 39.1%) gives 39.1% baseline accuracy; all four models now beat it — Logistic Regression (48.0%) by the smallest margin, then Decision Tree (55.5%), Random Forest (68.5%), and XGBoost (69.1%) (§6.2, §10.1). An earlier, unscaled version of Logistic Regression scored 37.3% and fell *below* this baseline — worth mentioning if asked how the pipeline has evolved.
 14. **Why is accuracy alone insufficient here?** It weights all classes equally regardless of size, hiding poor minority-class (Distressed) performance behind strong majority-class performance (§10.2).
-15. **Explain the difference between macro and weighted F1 using your own numbers.** XGBoost's macro F1 (0.567) vs weighted F1 (0.671) — the 0.10 gap shows performance is markedly worse on rare classes than the weighted average suggests (§10.6).
-16. **What is statistical significance, and did you test for it between your models?** A formal significance test (e.g., McNemar's test comparing paired predictions) was not performed; the ~0.2 percentage-point gap between Random Forest and XGBoost accuracy is well within what could be sampling noise from a single 609-row test split — a fair, honest limitation to name.
+15. **Explain the difference between macro and weighted F1 using your own numbers.** XGBoost's macro F1 (0.603) vs weighted F1 (0.683) — the 0.08 gap shows performance is markedly worse on rare classes than the weighted average suggests (§10.6).
+16. **What is statistical significance, and did you test for it between your models?** A formal significance test (e.g., McNemar's test comparing paired predictions) was not performed; the ~0.7 percentage-point gap between Random Forest and XGBoost accuracy has never been formally checked against what could be sampling noise from a single 609-row test split — a fair, honest limitation to name, even though the gap is now noticeably larger and less likely to be pure noise than it was in an earlier, untuned version of this pipeline.
 17. **Why might a single train/test split give an unreliable performance estimate?** It depends on the luck of which rows land in the test set; cross-validation would average over multiple splits for a tighter, more trustworthy estimate (§5.8).
 18. **What does "stratified" mean in your train/test split, and why did you use it?** It preserves each class's proportion in both partitions, essential given the Distressed class already has few examples that a non-stratified split could distribute unluckily (§5.8).
 19. **What's the difference between precision and recall, using the Distressed class as an example?** Precision: of predictions labelled Distressed, how many really are; Recall: of real Distressed companies, how many were caught. Both are poor for most models here (§10.3–10.4, §6.4).
@@ -1617,7 +1658,7 @@ Each entry: **Q**, then a strong answer, then the common mistake weaker candidat
 
 ## E. Evaluation and Results (55–68)
 
-55. **Which of your four models is "the best," and why?** XGBoost, on macro-F1 (0.567, the most balanced across classes) despite Random Forest's marginally higher raw accuracy (68.3% vs 68.1%) — macro F1 better reflects fairness across the business-critical minority class (§10.6, §10.12).
+55. **Which of your four models is "the best," and why?** XGBoost — it now leads on all three headline metrics (69.1% accuracy, 0.6833 weighted F1, 0.6032 macro F1), and its macro F1 lead specifically reflects better balance across classes rather than raw accuracy alone (§10.6, §10.12). Its hyperparameters are also the one set in this project backed by a documented `GridSearchCV` search (§9.7), which is worth citing as a secondary reason to trust the result.
 56. **Why is Logistic Regression's accuracy below the naive baseline?** Its unscaled, linear fit collapses almost all predictions into the Speculative class, performing worse than even trivially always guessing the plurality class (§6.2).
 57. **What does your confusion matrix reveal beyond the accuracy number?** Most misclassification happens between *adjacent* rating buckets, not between extremes — a reassuring, "near-miss" error pattern from a risk perspective (§10.7).
 58. **What does this ordinal error pattern suggest about a better modelling approach?** `RatingGroup` has a natural order the models are never told about (they're trained as nominal classifiers); an ordinal classification framing could be more theoretically appropriate (§10.7).
@@ -1629,7 +1670,7 @@ Each entry: **Q**, then a strong answer, then the common mistake weaker candidat
 64. **Why might a Precision-Recall curve be more informative than ROC here?** ROC's false-positive rate is diluted by the large number of true negatives under class imbalance, which can make ROC-AUC look better than precision on the rare class actually warrants (§10.8).
 65. **If you had to pick one number to report to a non-technical stakeholder, which would it be and why?** Macro F1, because it doesn't let strong majority-class performance mask weak minority-class (Distressed) performance, which is the business-critical failure mode (§10.6).
 66. **Random Forest shows 100% precision on Distressed — is that a good sign?** No — it only ever predicted Distressed twice in 609 rows; with so few predictions, 100% precision reflects extreme caution/avoidance, not reliable detection (§6.4).
-67. **What single change would most improve Distressed-class recall?** `class_weight="balanced"` — a low-effort, low-risk, directly targeted fix requiring no new library or leakage risk (§6.3).
+67. **What single change would most improve Distressed-class recall?** Carrying the XGBoost notebook's `sample_weight="balanced"` fix into `train_models.py` — a low-effort, low-risk, directly targeted, and already-validated-in-notebook change (§6.3, §9.7).
 68. **How would you validate that your reported numbers are reproducible?** Rerun `train_models.py` against the same data — `random_state=42` fixed consistently across the split and every estimator guarantees bit-for-bit identical results (§5.8).
 
 ## F. Implementation and Software Engineering (69–82)
@@ -1668,9 +1709,9 @@ Each entry: **Q**, then a strong answer, then the common mistake weaker candidat
 97. **Why didn't you build a fully productionized system (auth, monitoring, CI/CD)?** Correctly scoped as out of bounds for an FYP-level prototype focused on demonstrating the ML pipeline and comparative evaluation, not production software engineering maturity (§2.5).
 98. **What was the single hardest design decision in this project, and why?** Be ready with your own genuine answer here — a strong candidate, grounded in this document, is the 10-grade-to-4-bucket label grouping (§3.3, §3.6), since it directly trades away resolution for statistical reliability and shapes every downstream result.
 99. **If an evaluator ran your code themselves right now, would it work?** Should be yes, provided `pip install -r requirements.txt`, `npm install`, and `train_models.py` are run first exactly as documented in `README.md` — verify this yourself before your defence by doing a clean run-through.
-100. **What's the most honest one-sentence summary of this project's current state?** *"A correctly-engineered, leakage-aware, reproducible baseline ML pipeline comparing four algorithms on a real credit-rating dataset, with solid engineering practices (shared preprocessing, defensive validation) but several acknowledged methodological gaps — no imbalance correction, no feature scaling, no hyperparameter tuning, no cross-validation — that most directly explain its most severe weakness, near-failure to detect the Distressed class."*
-101. **What would you do differently if you started this project again today?** A strong answer names, concretely: add `class_weight="balanced"` from the start, add a `StandardScaler` branch specifically for Logistic Regression, and set up k-fold cross-validation before doing anything else — because these are the three highest-leverage, lowest-effort changes identified throughout this analysis (§6.3, §5.5, §5.8).
-102. **Can you defend every number in your results table without looking it up?** You should be able to state, from memory: Decision Tree 55.0%, Random Forest 68.3%, Logistic Regression 37.3%, XGBoost 68.1% accuracy; and that XGBoost has the best macro F1 (0.567) — practice this cold (§10.1).
+100. **What's the most honest one-sentence summary of this project's current state?** *"A correctly-engineered, leakage-aware, reproducible baseline ML pipeline comparing four algorithms on a real credit-rating dataset, with solid engineering practices (shared preprocessing, defensive validation, and — for XGBoost specifically — a documented hyperparameter search and ablation study) but several acknowledged methodological gaps — no imbalance correction reaching production, undocumented hyperparameter choices for three of the four models, no cross-validation on the final reported numbers — that most directly explain its most severe weakness, near-failure to detect the Distressed class."*
+101. **What would you do differently if you started this project again today?** A strong answer names, concretely: carry `sample_weight="balanced"` into production for XGBoost from the start rather than leaving it stranded in a notebook ablation study, extend the documented `GridSearchCV` approach already used for XGBoost to the other three models instead of setting their hyperparameters undocumented, and set up k-fold cross-validation before doing anything else — because these are the three highest-leverage, lowest-effort changes identified throughout this analysis (§6.3, §9.7, §5.8).
+102. **Can you defend every number in your results table without looking it up?** You should be able to state, from memory: Decision Tree 55.5%, Random Forest 68.5%, Logistic Regression 48.0%, XGBoost 69.1% accuracy; and that XGBoost has the best of all three headline metrics, including macro F1 (0.603) — practice this cold (§10.1).
 
 ---
 
@@ -1680,14 +1721,14 @@ This section deliberately adopts the harshest reasonable reading of your project
 
 ## 16.1 Technical Weaknesses
 
-- **No feature scaling anywhere in the shared pipeline**, directly and measurably disadvantaging Logistic Regression, which performs *below* the naive baseline as a direct, traceable consequence (§5.5, §7.1). *Risk:* an examiner who checks your pipeline code will spot this immediately; not naming it yourself first looks like you don't understand your own results. *Fix:* add a `StandardScaler` step specifically in the numeric branch used for Logistic Regression (it can be conditional on model type within a slightly restructured `build_preprocessor`, or applied via a separate pipeline for that one model).
-- **No class-imbalance correction of any kind**, despite a ~10.8:1 imbalance ratio and a business-critical minority class, resulting in every model catching under a third of true Distressed companies, and one model catching none at all (§6, §6.4). *Risk:* this is the most damaging single technical gap given the project's stated business purpose is specifically credit *risk* — the part of the problem the project is weakest at is the part that matters most. *Fix:* `class_weight="balanced"` is a near-free fix worth implementing before your defence if you have any remaining time.
-- **No hyperparameter tuning of any model** — every estimator runs on library defaults (§9.1). *Risk:* invites the fair question "how do you know these are your models' best achievable results?" *Fix:* even a small, time-boxed grid or random search over 2–3 key hyperparameters per model, reported honestly as a delta from the baseline, would substantially strengthen the methodology section of your report.
+- **Min-Max scaling was added, but only as a blunt instrument, and only for three of the four models.** `build_preprocessor(..., scale_numeric=True)` now applies to Decision Tree, Random Forest, and Logistic Regression uniformly (§5.4, §5.5) — it demonstrably helped Logistic Regression (accuracy rose from 37.3% unscaled to 47.95% scaled), but it was never isolated as a controlled, single-variable experiment (unlike XGBoost's hyperparameter tuning, §9.7) — there's no documented "Logistic Regression with vs. without scaling, same fold" comparison in the codebase, only a before/after across two different `training_summary.json` runs. Standardization (`StandardScaler`) and power transforms (Yeo-Johnson, §5.6) remain entirely unimplemented, and could plausibly help Logistic Regression further. *Risk:* an examiner could reasonably ask "how do you know Min-Max, specifically, was the right choice, and that it alone (not some other simultaneous change) caused the improvement?" *Fix:* run the isolated ablation and report it explicitly.
+- **No class-imbalance correction reaches production**, despite a ~10.8:1 imbalance ratio and a business-critical minority class, resulting in every model catching well under half of true Distressed companies (9–23% recall across all four, §6, §6.4) — and this is despite the XGBoost notebook's own ablation study finding a working fix (`sample_weight="balanced"`, the single best individual step for Distressed F1, §9.7). *Risk:* this is the most damaging single technical gap given the project's stated business purpose is specifically credit *risk* — the part of the problem the project is weakest at is the part that matters most, and unlike hyperparameter tuning, the evidence that a fix works is already sitting in your own notebook, unused. *Fix:* carry `sample_weight` into `train_models.py`'s `XGBClassifier` construction — ideally re-tuning hyperparameters jointly with it rather than combining the two independently-optimal configurations naively, since the ablation study found they interact (§9.7).
+- **Hyperparameter tuning is documented for only one of the four models.** XGBoost's production hyperparameters trace to a specific, reproducible `GridSearchCV` search (§9.7); Decision Tree's, Random Forest's, and Logistic Regression's current hyperparameters are also non-default, but no script or notebook cell shows how those specific values were chosen. *Risk:* invites the fair question "how do you know these three models' current hyperparameters are good, rather than arbitrary?" *Fix:* running the same kind of small, time-boxed grid or random search already built for XGBoost against the other three models, reported honestly as a delta from their own defaults, would close this asymmetry and substantially strengthen the methodology section of your report.
 
 ## 16.2 Report / Methodology Weaknesses
 
 - **No cross-validation** — a single stratified split is the sole basis for every reported number, which is a weaker evidentiary standard than standard ML methodology typically expects, especially given the smallest class has only 22 test examples (§5.8). *Risk:* numbers could shift non-trivially on a different random seed, and you have no evidence either way. *Fix:* add `StratifiedKFold` cross-validation (even just k=5) and report mean ± standard deviation per metric — this alone would materially raise the rigor of your evaluation section.
-- **No statistical significance testing between models** — "XGBoost is best" rests on a 0.2-percentage-point accuracy edge and a larger macro-F1 edge (0.567 vs 0.552) that were never checked for whether they're distinguishable from noise (§10.1, evaluator Q16, Q96). *Fix:* McNemar's test on paired predictions, or bootstrap confidence intervals on the accuracy/F1 difference.
+- **No statistical significance testing between models** — "XGBoost is best" now rests on a more comfortable ~0.7-percentage-point accuracy edge over Random Forest and a clearer macro-F1 edge (0.603 vs 0.555) than an earlier, untuned version of this pipeline showed, but neither gap has ever been formally checked for whether it's distinguishable from single-split sampling noise (§10.1, evaluator Q16, Q96). *Fix:* McNemar's test on paired predictions, or bootstrap confidence intervals on the accuracy/F1 difference, would let you state the gap's significance rather than its size alone.
 - **No formal exploratory data analysis (EDA) presented** — no skewness measurements, no correlation matrix between the 24 ratios (several of which are plausibly highly correlated, e.g., the three profit-margin variants, §11.7), no distribution plots beyond the confusion-matrix heatmaps. *Risk:* a report without EDA reads as having skipped a standard, expected step of any data science project. *Fix:* even a compact correlation heatmap and a handful of histogram/boxplot figures for the most skewed ratios would close this gap quickly.
 
 ## 16.3 Reproducibility Issues
@@ -1703,7 +1744,7 @@ This section deliberately adopts the harshest reasonable reading of your project
 ## 16.5 Experimental Weaknesses
 
 - **Random (non-temporal) train/test split despite the data containing a `Date` field**, meaning no out-of-time validation was performed and a mild leakage risk exists if the same company appears at multiple dates split across train/test (§5.8, §5.9, evaluator Q50, Q94). *Fix, if time allows:* a temporal split (train on earlier dates, test on later ones) would be a substantially stronger and more realistic validation methodology for a credit-risk application, and is one of the most sophisticated improvements you could propose.
-- **No missing-column-quantity comparison** across models beyond the shared preprocessing — all four models are compared on identical folds using identical preprocessing, which is a genuine strength (§7 opening), but it also means the comparison cannot isolate whether Logistic Regression's poor result is due to the algorithm itself or the shared pipeline's unsuitability for it specifically — a subtle but real experimental design limitation. *Fix:* an ablation experiment (Logistic Regression with vs. without scaling, same fold) would cleanly separate these two explanations.
+- **No missing-column-quantity comparison** across models beyond the shared preprocessing — all four models are compared on identical folds using the same `scale_numeric` value where applicable, which is a genuine strength (§7 opening), but the comparison still cannot cleanly isolate how much of Logistic Regression's remaining gap to the tree models is the linear-model assumption itself versus the specific `C=100.0` regularization choice versus the absence of a power transform (§5.6) — a subtle but real experimental design limitation, now narrower than it was before scaling was added, but not closed. *Fix:* a controlled ablation (Logistic Regression: unscaled vs. Min-Max-scaled vs. Min-Max-scaled + Yeo-Johnson, same fold, same `C`) would cleanly separate these explanations, mirroring the kind of isolated single-variable testing already done for XGBoost (§9.7).
 
 ## 16.6 Deployment Weaknesses
 
@@ -1712,12 +1753,465 @@ This section deliberately adopts the harshest reasonable reading of your project
 
 ## 16.7 Missing Comparisons and Justifications
 
-- **No comparison against a properly regularized / tuned baseline** for any model — every comparison is "default vs. default," which, while internally fair (§7 opening), can't tell you how much of Logistic Regression's poor showing is fixable with modest effort versus fundamental to the algorithm for this problem.
+- **No documented comparison against a properly regularized / tuned baseline for three of the four models.** XGBoost has this — Experiment 7's `GridSearchCV` compares an untuned pipeline against the tuned one explicitly, in-notebook (§9.7) — but Decision Tree, Random Forest, and Logistic Regression's current hyperparameters were never compared against their own library defaults in a documented experiment, so you can't yet say how much of their improvement (if any, versus their earlier default-hyperparameter results) is attributable to the specific values chosen.
 - **No justification given anywhere in the code or (presumably) report for *why* these specific four algorithms were chosen** over other plausible candidates (e.g., SVM, k-NN, LightGBM, a simple neural network) — be ready with a considered answer: these four represent a deliberate spread across model philosophy (linear/probabilistic, single tree, bagged ensemble, boosted ensemble), which is a genuinely reasonable justification if you state it explicitly, but it isn't visible anywhere in the current codebase or documentation, so an examiner has no way to know you thought about it unless you say so.
 
 ---
 
-# 17. Final Distinction Checklist
+# 17. XGBoost vs. Untried Alternatives (SVM, Neural Networks, LightGBM, CatBoost)
+
+§7 and §8 defend XGBoost against the three models this project *did* implement (Logistic Regression, Decision Tree, Random Forest). That's necessary but not sufficient — a strong examiner will also ask why you didn't reach for something else entirely. `requirements.txt` confirms none of the four below are installed (`pandas`, `numpy`, `scikit-learn`, `xgboost`, `joblib`, `openpyxl`, `matplotlib`, `shap` — no `torch`/`tensorflow`/`keras`, no `lightgbm`, no `catboost`). This section is honest about that: these are *not* implemented, and every claim here is a reasoned prediction, not a result you can point to in `training_summary.json`.
+
+## 17.1 Support Vector Machine (SVM)
+
+**Core idea.** An SVM finds the hyperplane that separates classes with the **maximum margin** — the largest possible gap between the decision boundary and the nearest points of each class (the "support vectors"). For non-linearly-separable data, the **kernel trick** implicitly projects features into a higher-dimensional space (via, e.g., an RBF kernel: $K(x_i, x_j) = \exp(-\gamma \lVert x_i - x_j \rVert^2)$) where a linear separator becomes possible, without ever explicitly computing that high-dimensional representation.
+
+**Why it's a plausible alternative here.** Like Logistic Regression, SVMs can be regularized cleanly (the `C` parameter trades off margin width against misclassification tolerance), and with an RBF kernel they can capture non-linear boundaries that plain Logistic Regression cannot — directly addressing §7.1's core limitation.
+
+**Why it's a defensible choice *not* to use, for this specific project:**
+- **Scaling dependency.** SVMs are at least as scale-sensitive as Logistic Regression (§5.5) — distances in the kernel computation are dominated by whichever raw feature has the largest numeric range. This project's late addition of Min-Max scaling (§5.5) would need to extend to any SVM exactly as it now does for Logistic Regression.
+- **No native multi-class support.** scikit-learn's `SVC` handles $K>2$ classes via **one-vs-one** ($\binom{K}{2}=6$ binary classifiers for this project's 4 classes) or **one-vs-rest** — an indirection XGBoost's native multi-class softmax objective (§8.4) doesn't need, adding both training cost and a layer of result-combination logic to reason about.
+- **Probability outputs require an extra step.** `SVC` doesn't produce genuine class probabilities from its margin-based decision function directly — scikit-learn's `probability=True` option fits an internal 5-fold cross-validated Platt-scaling (sigmoid) calibration on top, which is expensive and adds yet another hyperparameter-tuning surface.
+- **No native missing-value handling or built-in feature importance** — SVMs offer neither of XGBoost's practical conveniences (§8.10, §8.8); you'd still need the same `SimpleImputer` step (§5.4), and you'd lose the free feature-importance signal, falling back to permutation importance or SHAP's slower `KernelExplainer` (§11.4) instead of the fast, exact `TreeExplainer`.
+- **Training cost scales poorly.** Classical SVM training is roughly $O(n^2)$ to $O(n^3)$ in the number of training rows for non-linear kernels — a real concern if the dataset grows, though at this project's current 1,420 training rows it's a non-issue in practice.
+
+**When SVM would genuinely be the better choice:** smaller, cleaner, well-scaled datasets with a clear margin between classes and no missing values — SVMs remain a strong choice in domains like image/text classification on modest sample sizes, or wherever a maximum-margin geometric guarantee is more valuable than raw predictive accuracy.
+
+**One-sentence defensible answer:** *"An SVM was a reasonable alternative, but it would have reintroduced the same feature-scaling dependency Logistic Regression already exposed as a weakness (§5.5), without XGBoost's native missing-value handling, built-in feature importance, or fast SHAP explainability — and multi-class SVMs need an indirect one-vs-one/one-vs-rest reduction that XGBoost's objective avoids natively."*
+
+## 17.2 Neural Networks (MLP / Deep Learning)
+
+**Core idea.** A feed-forward neural network (multilayer perceptron) stacks layers of weighted sums followed by non-linear activation functions (ReLU, sigmoid, tanh), learning both the feature representation *and* the final decision boundary jointly via **backpropagation** — gradient descent applied layer-by-layer using the chain rule to compute how each weight, at every layer, contributed to the final loss.
+
+**Why it's tempting to propose.** Neural networks are the most flexible function approximators on this list — in principle, a sufficiently large network can represent any non-linear decision boundary, addressing Logistic Regression's core limitation just as XGBoost does, but via a completely different mechanism (learned representations rather than sequential tree corrections).
+
+**Why it's a defensible choice *not* to use here — this is the single clearest "wrong tool for the job" case among all the alternatives:**
+- **Tabular data is exactly where neural networks are weakest relative to gradient-boosted trees.** This is not a hand-wave — it is a well-documented, actively researched empirical finding (e.g., Grinsztajn et al., "Why do tree-based models still outperform deep learning on tabular data?", 2022): on datasets with a moderate number of heterogeneous, non-smooth, ratio-style features like this project's 25, gradient-boosted trees consistently outperform neural networks of comparable tuning effort. Deep learning's advantages (automatic feature learning from raw, unstructured signals like pixels or tokens) simply don't apply to a table of 25 pre-engineered financial ratios — the "feature engineering" is already done for you by the ratio definitions themselves.
+- **Sample size is a genuine constraint.** 1,420 training rows (§5.8) is small for a neural network, which typically needs far more examples per parameter to avoid overfitting than a regularized tree ensemble does — you would need aggressive dropout, weight decay, and early stopping just to reach parity with what XGBoost achieves comparatively easily on the same data.
+- **Loses interpretability and native missing-value handling.** A neural network is a harder black box than XGBoost to explain (§11 would need SHAP's slower, sampling-based `DeepExplainer`/`GradientExplainer` rather than the fast, exact `TreeExplainer`, §11.4), and offers none of §8.10's native missing-value handling.
+- **No categorical handling without preprocessing decisions of its own** — `Sector` would still need one-hot encoding or an embedding layer (itself an extra architectural decision requiring its own justification for a 12-category feature this small).
+- **Far more hyperparameters, with far less intuitive meaning** — architecture (number of layers, layer width), activation choice, optimizer (Adam vs. SGD), learning rate schedule, dropout rate, batch size, and number of epochs, compounding the exact tuning-effort problem this project already tuned via `GridSearchCV` for XGBoost alone (§9.7) into a substantially larger search space.
+
+**When a neural network would genuinely be the better choice:** unstructured data (images, text, audio) where representation learning is the point, very large tabular datasets (hundreds of thousands to millions of rows) where the sample-size disadvantage disappears, or multi-modal problems combining tabular features with free-text data (e.g., analyst commentary alongside the financial ratios).
+
+**One-sentence defensible answer:** *"Neural networks are demonstrably the wrong tool for small-to-moderate tabular datasets like this one — the empirical ML literature consistently shows gradient-boosted trees outperforming neural networks on data shaped like mine, and with only 1,420 training rows I'd be fighting overfitting and hyperparameter complexity for a model class this data doesn't favour in the first place."*
+
+## 17.3 LightGBM
+
+**Core idea.** LightGBM is another gradient-boosted tree library, philosophically identical to XGBoost (both minimize a regularized, second-order-approximated loss by sequentially adding trees, §8.3–8.4), but with two distinguishing implementation choices: **leaf-wise (best-first) tree growth** instead of XGBoost's level-wise growth (LightGBM always splits whichever leaf currently reduces loss the most, rather than growing every leaf at the current depth before going deeper, which tends to reach a given loss reduction with fewer splits, but risks deeper, more overfitting-prone trees on small datasets unless depth is capped), and **histogram-based split-finding with gradient-based one-side sampling (GOSS)**, which is faster on very large datasets.
+
+**Why this is the hardest of the four alternatives to defend against — they are genuinely close cousins.** Unlike SVM or neural networks, there is no clean theoretical reason LightGBM would perform meaningfully worse than XGBoost on this project's data; both are well-tuned, well-regularized gradient boosting implementations, and published benchmarks routinely show them trading wins depending on the specific dataset.
+
+**The honest, defensible answer here is about maturity and scope, not a performance argument:**
+- **XGBoost is the more established, more widely documented library**, with a longer track record in credit-risk and financial ML specifically, and broader tutorial/StackOverflow/community coverage — a real, if soft, consideration when working within a project timeframe where debugging an obscure issue quickly matters.
+- **LightGBM's leaf-wise growth is specifically more prone to overfitting on small datasets** (documented in LightGBM's own official parameter-tuning guidance, which recommends capping `num_leaves` carefully for exactly this reason) — with only 1,420 training rows, this project's data is squarely in the size range where that risk is most relevant, making XGBoost's level-wise growth (bounded more predictably by `max_depth`, §8.6) a marginally safer default choice.
+- **This project's actual computational scale (2,029 rows total) never reaches the regime where LightGBM's headline advantage — training speed on very large datasets — would matter.** LightGBM's histogram-based GOSS sampling exists specifically to make training tractable on millions of rows; at this dataset's size, the two libraries' training time is not meaningfully different, so LightGBM's core selling point is simply inapplicable here.
+- **SHAP support exists for both** (§11) via the same `TreeExplainer` mechanism, so explainability is not a differentiator.
+
+**When LightGBM would genuinely be the better choice:** much larger datasets (hundreds of thousands to millions of rows) where its training-speed advantage becomes material, or scenarios needing very fast iteration during experimentation at scale.
+
+**One-sentence defensible answer:** *"LightGBM and XGBoost are close enough in approach that this isn't a strong-versus-weak-model argument — I chose XGBoost for its maturity and documentation, and because LightGBM's core advantage, training speed on very large datasets via leaf-wise growth and histogram sampling, doesn't apply at this project's scale of 2,029 rows, while its leaf-wise growth's higher overfitting risk on small datasets is a real, if modest, consideration against it here."*
+
+## 17.4 CatBoost
+
+**Core idea.** CatBoost (from "Categorical Boosting") is a third gradient-boosted tree library whose headline differentiator is **native, statistically principled handling of categorical features** via **ordered target statistics** (a technique that encodes each category using the target's average outcome computed only from rows *before* it in a randomly permuted order, specifically designed to avoid the target leakage that naive mean-target-encoding would otherwise introduce) — avoiding the need for one-hot encoding entirely.
+
+**Why this is worth taking seriously for this specific project, more than LightGBM.** This project has exactly one categorical feature — `Sector`, 12 distinct values, one-hot encoded into 12 binary columns (§5.4) — which is precisely the scenario CatBoost's core feature was built for. This is the alternative you should be most prepared to discuss substantively, not dismiss quickly.
+
+**Why one-hot encoding a 12-category feature is still a defensible choice over reaching for CatBoost:**
+- **12 categories is a modest cardinality.** CatBoost's ordered target statistics earn their keep most clearly on high-cardinality categorical features (hundreds or thousands of distinct values — postal codes, product SKUs, user IDs) where one-hot encoding would explode dimensionality (§5.4's "curse of dimensionality" note). At 12 categories, one-hot encoding adds only 12 columns to a 25-feature space — a modest, entirely manageable increase, not a genuine problem CatBoost would need to solve.
+- **One-hot encoding is simpler to reason about and to defend under questioning** — there is no risk of subtly leaking target information through an encoding scheme, and no additional hyperparameter (CatBoost's own encoding has its own tuning knobs, e.g., the permutation count and prior smoothing) to justify. §5.4 already explains precisely why one-hot avoids inventing a false numeric ordering for an unordered category — that reasoning holds regardless of which gradient boosting library sits downstream of it.
+- **This project's shared `ColumnTransformer` (§5.2, §5.4) already applies identical preprocessing to all four models uniformly**, which is a genuine, stated experimental-design strength (§7's opening) — swapping in CatBoost specifically for its categorical handling would mean giving that one model a different preprocessing path from the other three, breaking the "only the estimator differs" comparison design (§7) that makes this project's four-model comparison fair in the first place.
+
+**When CatBoost would genuinely be the better choice:** datasets with several high-cardinality categorical features (where one-hot encoding would meaningfully bloat dimensionality), or when target leakage from naive encoding schemes is a live risk that ordered target statistics specifically defend against.
+
+**One-sentence defensible answer:** *"CatBoost's core advantage is built for high-cardinality categorical features, and `Sector`'s 12 categories one-hot-encode into a manageable 12 extra columns rather than hundreds — the problem CatBoost solves doesn't really exist at this cardinality, and choosing it would have meant giving XGBoost's comparison an inconsistent preprocessing path relative to the other three models, undermining the fair, single-`ColumnTransformer` experimental design this project relies on."*
+
+## 17.5 Summary Table
+
+| Alternative | Core reason not chosen | Would win if... |
+| --- | --- | --- |
+| SVM | Reintroduces scale-sensitivity (§5.5), needs one-vs-one/-rest for 4 classes, no native missing-value handling or fast SHAP support | Data were smaller, cleaner, well-scaled, with a clear inter-class margin |
+| Neural Network | Tabular data + small sample size (1,420 rows) is empirically the weakest regime for deep learning vs. tree ensembles | Data were unstructured (images/text) or the dataset were orders of magnitude larger |
+| LightGBM | No performance argument — XGBoost chosen for maturity/documentation; LightGBM's leaf-wise growth risks more overfitting at this small a scale, and its speed advantage needs far more rows than this project has | Dataset were hundreds of thousands to millions of rows |
+| CatBoost | `Sector`'s 12 categories are too low-cardinality for ordered target statistics to earn their keep over one-hot encoding; would break the shared-preprocessing experimental design (§7) | The dataset had several high-cardinality categorical features |
+
+---
+
+# 18. Term Encyclopedia — The High-Yield Terms, Deepened
+
+§14's Glossary gives you a fast, one-line definition of everything. This section goes deeper on the terms most likely to actually get you drilled in a viva — each entry adds intuition, an analogy, the math where it matters, how it shows up (or explicitly doesn't) in this project's code, a common misconception, and one exam question with a model answer. Where a term is already treated at length elsewhere (e.g., XGBoost's regularization toolkit, §8.6), this section adds the missing angles rather than repeating them — follow the cross-reference for the full treatment.
+
+## 18.1 Overfitting and Underfitting
+
+**Definition.** Overfitting: a model fits the training data's noise and idiosyncrasies so closely that it fails to generalize — training performance is high, test performance is meaningfully lower. Underfitting: a model is too simple to capture the true pattern even in the training data — both training and test performance are poor.
+
+**Analogy.** A student who memorizes last year's exam paper word-for-word (overfitting) does brilliantly if this year's paper is identical, and badly the moment a single question changes. A student who only learned "always answer B" (underfitting) does badly on both papers regardless of content.
+
+**In this project's code.** `DecisionTreeClassifier` with no `max_depth` limit (§7.2) is the textbook overfitting example — it grows until leaves are near-pure, memorizing training rows. Logistic Regression (§7.1) is the underfitting example — its linear decision boundary structurally cannot represent the non-linear, interaction-heavy relationship credit risk likely has, regardless of how much data it sees.
+
+**Misconception.** "A more complex model is always better." False — complexity without regularization or enough data increases variance (§18.2) faster than it reduces bias, which is exactly why Random Forest (§7.3) and XGBoost (§8) exist: they add complexity (many trees) while actively controlling the overfitting that complexity would otherwise cause, via averaging (bagging) or shrinkage/regularization (boosting) respectively.
+
+**Exam Q → model answer.** *"How do you know your Decision Tree overfit, rather than just performed worse?"* → "I didn't compute a training-set accuracy to check the gap directly, which is a real limitation worth naming (§16.2) — but the *structural* argument stands regardless: `max_depth=None` with no `min_samples_leaf` constraint permits leaves as small as a single training row, and Decision Tree's test accuracy (55.5%) sitting well below the ensemble methods built specifically to correct single-tree overfitting (68–69%, §7.3) is consistent with, though not direct proof of, that mechanism."
+
+## 18.2 Bias-Variance Tradeoff
+
+Full model-by-model placement already covered in §8.7. The piece worth adding here: **irreducible error**. Total expected test error decomposes (informally) as $\text{Bias}^2 + \text{Variance} + \text{Irreducible Error}$ — the last term is noise inherent to the problem itself (e.g., two companies with identical financial ratios genuinely receiving different agency ratings due to qualitative factors this dataset doesn't capture, §1.2) that *no* model, however well-tuned, can eliminate. This matters in a viva because an examiner asking "why isn't your accuracy higher" sometimes expects you to name this third term, not just propose more tuning — some of this project's error ceiling is plausibly irreducible, since agency ratings partly reflect qualitative judgement (§1.3) this dataset's 24 quantitative ratios cannot see.
+
+## 18.3 Regularization — The General Concept
+
+Model-specific regularization (`C` for Logistic Regression, `gamma`/`lambda`/`alpha` for XGBoost) is covered in §7.1 and §8.6. The general principle: regularization adds a penalty term to the training objective so the optimizer is discouraged from fitting patterns that improve training loss but don't generalize. **L1 (Lasso)** penalizes the *sum of absolute values* of weights ($\lambda \sum |w_i|$) and can drive some weights to exactly zero — a sparsifying, implicit feature-selection effect. **L2 (Ridge)** penalizes the *sum of squared values* ($\lambda \sum w_i^2$) and shrinks weights toward zero without necessarily zeroing them — it penalizes large weights disproportionately harder than small ones (because of the square), producing smoother, more evenly-distributed weight shrinkage. This project's Logistic Regression uses `penalty="l2"` (§7.1); XGBoost's `reg_alpha`/`reg_lambda` (§8.6) are the L1/L2 equivalents applied to leaf weights rather than linear coefficients.
+
+## 18.4 Entropy, Gini, and Information Gain — A Worked Example
+
+The definitions are in §7.2. Here's the worked arithmetic an examiner might ask you to do live. Suppose a tree node has 10 rows: 6 Speculative, 3 Investment-Low, 1 Distressed (0 Investment-High).
+
+$$
+\text{Gini} = 1 - (0.6^2 + 0.3^2 + 0.1^2 + 0^2) = 1 - (0.36 + 0.09 + 0.01 + 0) = 0.54
+$$
+
+$$
+\text{Entropy} = -(0.6\log_2 0.6 + 0.3\log_2 0.3 + 0.1\log_2 0.1) = -(0.6 \times -0.737 + 0.3 \times -1.737 + 0.1 \times -3.322) \approx 1.30 \text{ bits}
+$$
+
+If a candidate split perfectly separates this into a pure 6-Speculative node (Gini=0, entropy=0) and a pure 4-row {3 Investment-Low, 1 Distressed} node — wait, that's not pure; suppose instead it separates into a pure 6-Speculative node and a 4-row node that's still mixed (3 Investment-Low, 1 Distressed, Gini $=1-(0.75^2+0.25^2)=0.375$) — the weighted child impurity is $\frac{6}{10}(0) + \frac{4}{10}(0.375) = 0.15$, so the **information gain** (impurity reduction) is $0.54 - 0.15 = 0.39$. The algorithm evaluates every feature and every threshold this way and picks whichever split maximizes this reduction.
+
+**Misconception.** "Gini impurity has something to do with the Gini coefficient used in economics for income inequality." They share a name and a similar mathematical flavor (both measure a kind of "spread" or "impurity" in a distribution) but are different formulas used for different purposes — don't conflate them if asked, but it's fine to note the naming coincidence if it comes up.
+
+## 18.5 Gradient, Loss Function, and Objective Function — Precise Distinctions
+
+**Loss function**: measures the error for a *single prediction* against its true label (e.g., squared error for one row, or log loss for one row's predicted probability vs. its true class).
+
+**Cost function**: the *average* loss across all training examples — what's actually being minimized during training. (In casual ML usage, "loss function" and "cost function" are frequently used interchangeably; know the distinction exists but don't over-index on it if an examiner uses them loosely.)
+
+**Objective function**: the cost function *plus* any regularization terms — this is XGBoost's exact framing (§8.4): $\text{Obj} = \sum_i l(y_i, \hat{y}_i) + \sum_k \Omega(f_k)$, where $l$ is the per-row loss (this project: multi-class log loss, `eval_metric="mlogloss"`) and $\Omega$ is the regularization penalty on tree complexity (§8.6).
+
+**Gradient**: the vector of partial derivatives of the loss with respect to each of the model's current predictions — it tells you the direction (and, via its magnitude, the rate) in which each prediction should change to most reduce the loss. This is the "gradient" in "gradient boosting" (§8.4): each new tree is fit to approximate this gradient, not to the raw residual directly (though for squared-error loss, the gradient and the residual happen to coincide up to a sign, which is part of why "residual correction" is a common simplified explanation of boosting, §8.3).
+
+## 18.6 Calibration — ⚠️ Not implemented in this project, but you must be able to discuss it fluently
+
+This term appeared in your own project description but is **not implemented anywhere in this repository** — no `CalibratedClassifierCV`, no calibration curve, no Brier score computation (confirmed by direct search of `common.py`, `train_models.py`, `predict.py`, and all four notebooks, consistent with §10.10's existing note). It's still one of the most likely concepts an examiner probes, precisely because it's easy to *say* your model outputs "confidence scores" without having verified they mean anything.
+
+**Definition.** A classifier is **calibrated** if, among all the times it predicts a class with 70% probability, that class is actually correct about 70% of the time. A model can have excellent accuracy while being badly *miscalibrated* — e.g., systematically outputting 95% confidence when it's actually right only 70% of the time (overconfident), which is common for tree ensembles specifically, because averaging/boosting tends to push predicted probabilities toward the extremes (0 or 1) faster than the true underlying uncertainty warrants.
+
+**Why it matters for this project specifically.** `predict.py` returns per-class probabilities (`predict_proba`) to the frontend (§1.1, §12.3) as a "confidence score" — if a user sees "87% confidence: Investment-High," they will reasonably interpret that as roughly an 87% chance of being right. **This project has never verified that interpretation is accurate** — the probabilities are raw model outputs, not calibrated ones. This is a real, nameable gap for a project whose entire value proposition (§1.3) is giving a lender a trustworthy risk signal.
+
+**Sigmoid (Platt) calibration**: fits a logistic regression on top of the model's raw scores, mapping them to calibrated probabilities — works well when the miscalibration is roughly sigmoid-shaped, and is simple, but can underfit more complex miscalibration patterns.
+
+**Isotonic regression calibration**: fits a non-parametric, monotonically increasing step function instead — more flexible, but needs more data to avoid overfitting the calibration step itself, and can behave erratically with small calibration sets (a real risk here, given `Distressed` has only ~72 examples in the full dataset).
+
+**How you'd check calibration if you did implement it**: a **reliability diagram** (predicted probability, binned, on the x-axis; observed accuracy within each bin on the y-axis) — a perfectly calibrated model traces the diagonal $y=x$ line. The **Brier score** (mean squared error between predicted probability and the true 0/1 outcome, generalized to multi-class) gives a single summary number, where lower is better.
+
+**Exam Q → model answer.** *"Your app shows a confidence percentage. Is it trustworthy?"* → "Honestly, no — it's the model's raw `predict_proba` output, and I haven't run any calibration check (no reliability diagram, no Brier score). Tree ensembles like Random Forest and XGBoost are known to often be overconfident, so the true accuracy at, say, an 80%-confidence prediction could plausibly be lower than 80%. Calibrating this — most simply, isotonic or Platt scaling fit on a held-out validation split not otherwise used in training — would be a direct, concrete next step before I'd trust this number in front of a real lender."
+
+## 18.7 ROC Curve and ROC-AUC
+
+Marked as not computed in §10.8; here's the depth to have ready regardless. The **ROC curve** plots the **True Positive Rate** ($TPR = \text{Recall} = \frac{TP}{TP+FN}$) against the **False Positive Rate** ($FPR = \frac{FP}{FP+TN}$) as the decision threshold varies from 0 to 1 (for a binary problem — see below for the multi-class complication). **ROC-AUC** (Area Under the Curve) summarizes the whole curve as one number between 0.5 (no better than random guessing) and 1.0 (perfect separation) — it can be interpreted as *"the probability that the model ranks a randomly chosen positive example higher than a randomly chosen negative example."*
+
+**Why it's not a trivial add-on for this project.** ROC-AUC is fundamentally a **binary** metric. This project has 4 classes, so computing it requires either **one-vs-rest** (compute a separate ROC curve for each class against "all other classes combined," then average — scikit-learn's `roc_auc_score(..., multi_class="ovr")`) or **one-vs-one** (average over all $\binom{4}{2}=6$ pairwise comparisons). Either choice is a real design decision with trade-offs (one-vs-rest is more standard and interpretable per-class; one-vs-one is less sensitive to class imbalance in the "rest" group) that this project has never had to make, because it was never implemented.
+
+**Misconception.** "ROC-AUC is class-imbalance-robust, so it would have been a better metric than accuracy for this project." Partially true, but incomplete — ROC-AUC is more robust to imbalance than accuracy, but it can still look optimistic under severe imbalance because the false-positive rate's denominator ($FP+TN$) is dominated by the (large) majority-class negatives, making a model look better at avoiding false positives than it would if the classes were balanced. The **Precision-Recall curve** (and its own AUC) is generally the more honestly imbalance-sensitive alternative, precisely because precision's denominator ($TP+FP$) isn't inflated by the large true-negative count the way FPR's is.
+
+## 18.8 Precision, Recall, Sensitivity, Specificity — the Full Family
+
+Precision and Recall are defined in §10.3–10.5. Two terms your original prompt named that aren't yet distinguished: **Sensitivity is just another name for Recall** ($\frac{TP}{TP+FN}$) — the term "sensitivity" is more common in medical/clinical contexts (a test's sensitivity to detecting real cases), while "recall" is more common in ML/information-retrieval contexts; they are the identical formula. **Specificity** is the "recall of the negative class": $\frac{TN}{TN+FP}$ — the proportion of true negatives correctly identified as negative. In a binary framing of this project (e.g., "is this company Distressed, yes/no"), specificity would answer "of all companies that are genuinely *not* Distressed, what fraction did the model correctly clear?" — a metric this project has never computed because it's binary-framed and the problem is 4-class.
+
+## 18.9 Micro F1 (the one your prompt named that isn't yet in §10.6)
+
+§10.6 covers macro vs. weighted F1 in depth. **Micro F1** is the third variant: instead of computing F1 per class and then averaging (macro/weighted), micro F1 pools every true positive, false positive, and false negative across *all* classes into single global counts, then computes one precision/recall/F1 from those pooled counts. **A key mathematical fact worth knowing**: for a standard multi-class classification problem where every row gets exactly one predicted label (as this project's `argmax`-based prediction does, §12.3), **micro F1 is mathematically identical to accuracy** — because every misclassification is simultaneously a false positive for the predicted (wrong) class and a false negative for the true class, so the pooled counts always work out to the same ratio as raw accuracy. This is a sharp, examiner-impressing fact to state if asked "why didn't you report micro F1?" — the honest answer is that it would have been a redundant restatement of the accuracy column already in §10.1's table, not a new metric.
+
+## 18.10 Cross-Validation, Stratified Cross-Validation, and Bootstrap
+
+$k$-fold cross-validation is explained conceptually in §5.8 and its actual use (inside `GridSearchCV`/`RandomizedSearchCV` for XGBoost only, §9.7) is documented there. **Formally**: partition the data into $k$ equal folds; for $i = 1 \dots k$, train on all folds except fold $i$, evaluate on fold $i$; report the mean (and, ideally, standard deviation) of the $k$ evaluation scores. **Stratified** $k$-fold (used throughout this project's notebook searches, `StratifiedKFold`, §9.7) additionally preserves each class's proportion within every fold — critical here given `Distressed` is only ~3.6% of the data (§6.1); a non-stratified fold could by chance contain very few or zero Distressed examples, making that fold's score unreliable.
+
+**Bootstrap**: sampling *with replacement* from a dataset to create a new sample of the same size — the mechanism behind Random Forest's bagging (§7.3). A useful, examinable fact: for a bootstrap sample of size $n$ drawn from $n$ original rows, the probability any single specific row is *never* selected is $(1-\frac{1}{n})^n \to e^{-1} \approx 0.368$ as $n$ grows — which is where the commonly-cited "~37% of rows are left out of each bootstrap sample" figure (§7.3) comes from mathematically, not as an approximation pulled from nowhere. Those left-out rows for a given tree are called **out-of-bag (OOB)** samples, and can be used to estimate generalization performance without a separate held-out set — scikit-learn's `RandomForestClassifier` supports this via `oob_score=True`, **which this project does not use** (a quick, free cross-check this project could add with zero extra computation, since the trees are already being built).
+
+## 18.11 Confidence Interval
+
+A range around a point estimate (e.g., "accuracy = 69.1%") that, under repeated sampling, would contain the true underlying value a specified percentage of the time (e.g., a 95% confidence interval). **This project reports single-number point estimates only** (§10.1) — there is no confidence interval anywhere, which directly relates to §16.2's "no statistical significance testing" critique. A **bootstrap confidence interval** — repeatedly resampling the 609-row test set with replacement, recomputing accuracy each time, and taking the 2.5th/97.5th percentiles of that distribution — is the most concrete, implementable fix, and is exactly what §16.2's *Fix* line already proposes.
+
+## 18.12 SHAP, Shapley Values, Base Value, Expected Value, Local vs. Global Explanation
+
+Full treatment in §11. One clarification worth having crisp: **"base value" and "expected value" are the same thing in SHAP's vocabulary** — both refer to the average model output (in log-odds or probability space, depending on configuration) across the entire background/training dataset, which is the starting point every individual SHAP explanation's feature contributions sum away from. **Local explanation** = one row's individual SHAP values (§11.2, §11.5's force plots). **Global explanation** = an aggregation of local explanations across many rows, typically by averaging the absolute SHAP value per feature (§11.5's summary plots) — this is philosophically different from, though numerically related to, XGBoost's native gain-based feature importance (§8.8): native importance answers "which features did the ensemble rely on overall," while SHAP's global aggregate answers "if you average how much each feature actually moved individual predictions, which matters most" — these can, and sometimes do, disagree.
+
+## 18.13 Permutation Importance — Not used, but worth contrasting against SHAP and native importance
+
+**What it is.** After training, randomly shuffle (permute) the values of one feature column in the test set — breaking any real relationship between that feature and the target — and measure how much the model's performance (e.g., accuracy) drops. A large drop means the model relied heavily on that feature; no drop means it didn't matter.
+
+**Why it's a legitimate alternative to both native importance and SHAP.** Unlike XGBoost's native gain-based importance (§8.8), which only reflects what happened *during training* and can be biased toward high-cardinality or frequently-split features, permutation importance is **model-agnostic** (works identically for any of this project's four models, including Logistic Regression, which has no native "gain" concept) and is measured directly against **held-out performance**, making it arguably more honest about real-world usefulness. Unlike SHAP, it's computationally cheap and simple to implement (`sklearn.inspection.permutation_importance`), but it only gives a *global* ranking — no per-prediction, per-row explanation the way SHAP's local values do (§11.2), and it can be misleading when features are correlated (shuffling one correlated feature barely hurts performance because a correlated partner "covers" for it, understating both features' true joint importance).
+
+**This project does not use it anywhere** — a legitimate, quick addition if you want one more explainability angle beyond SHAP and native importance to discuss.
+
+## 18.14 SMOTE and Nearest Neighbours — the k-NN Math Behind It
+
+§6.3 covers SMOTE conceptually. The **k-Nearest Neighbours** mechanism underneath it: for a given point, compute the Euclidean distance $d(x_i, x_j) = \sqrt{\sum_{f} (x_{i,f} - x_{j,f})^2}$ to every other point of the same class, sort by distance, and take the $k$ closest. SMOTE's synthetic point generation ($x_{new} = x_i + \delta \cdot (x_{neighbour} - x_i)$, §6.3) depends entirely on this distance computation being meaningful — which is exactly why SMOTE's sensitivity to unscaled features (§6.3) is a real, mechanically-grounded concern, not a vague caveat: a feature with a naturally larger numeric range dominates the Euclidean distance sum, distorting which points actually count as "nearest."
+
+## 18.15 Data Leakage, Pipeline, Random State — Cross-References
+
+Fully covered in §5.9, §5.4/§5.10, and §5.8 respectively — no gap to fill here, but note the connective tissue for a viva: a scikit-learn `Pipeline` (§5.4) is precisely the mechanism that prevents the most common leakage bug (§5.9) — because `.fit()` on a `Pipeline` fits every step, including preprocessing, using only the training fold passed to it, with no manual step where you could accidentally fit a transformer on the full dataset before splitting.
+
+## 18.16 One-Hot Encoding and Median Imputation — Cross-References
+
+Fully covered in §5.4. No gap to fill; if asked "why not target encoding for `Sector`?" — see §17.4's CatBoost discussion, which covers exactly this trade-off (ordered target statistics vs. one-hot) in the context of a specific, defensible alternative.
+
+## 18.17 Probability Threshold and Decision Rule
+
+**Binary framing**: by default, a binary classifier predicts the positive class if $P(\text{positive}) \geq 0.5$ — this 0.5 cutoff is the **probability threshold**, and it is itself a tunable choice, not a law of nature; shifting it trades off precision against recall (§10.11's "Threshold Optimization," marked not implemented).
+
+**This project's actual multi-class decision rule**: not a threshold at all — `predict.py` uses **argmax** (§12.3): the predicted class is simply whichever of the four classes has the single highest `predict_proba` output, with no minimum-confidence cutoff. This means a genuinely uncertain prediction (e.g., 28% Investment-High, 27% Investment-Low, 26% Speculative, 19% Distressed) is still confidently reported as "Investment-High" to the user, with no signal that the model was nearly torn four ways. **A concrete, implementable improvement**: surface the full probability distribution (which `predict.py` already computes) more prominently in the UI, or add a "low-confidence" flag when the top class's probability is below some threshold relative to the runner-up — neither is currently done.
+
+## 18.18 Early Stopping — Cross-Reference
+
+Fully covered in §8.9 and §9.7 (including the ablation study's specific negative result and why). No gap to fill.
+
+---
+
+# 19. Mathematics Appendix — Every Formula, Consolidated
+
+Every formula below is explained in full, with intuition, elsewhere in this document — this appendix exists so you have one place to drill the raw math without hunting through 18 sections the night before your defence. Each entry gives the formula, a one-line meaning, and where the full explanation lives.
+
+| Concept | Formula | One-line meaning | Full explanation |
+| --- | --- | --- | --- |
+| Gini impurity | $1 - \sum_k p_k^2$ | 0 = pure node, higher = more mixed classes | §7.2, §18.4 |
+| Entropy | $-\sum_k p_k \log_2 p_k$ | Bits of "surprise" in a node's class distribution | §7.2, §18.4 |
+| Information gain | $\text{Impurity(parent)} - \sum \frac{n_{child}}{n_{parent}}\text{Impurity(child)}$ | Impurity reduction from a candidate split | §7.2, §18.4 |
+| Sigmoid | $\sigma(z) = \frac{1}{1+e^{-z}}$ | Squashes any real number into $(0,1)$ | §7.1 |
+| Softmax | $P(y=k\mid x) = \frac{e^{z_k}}{\sum_j e^{z_j}}$ | Turns $K$ raw scores into a probability distribution summing to 1 | §7.1 |
+| Log-odds | $\ln\left(\frac{p}{1-p}\right) = z$ | The linear score $z$ *is* the log-odds of the positive class | §7.1 |
+| XGBoost objective | $\sum_i l(y_i,\hat y_i) + \sum_k \Omega(f_k)$ | Loss across all rows plus a complexity penalty across all trees | §8.4, §18.5 |
+| Gradient (1st order) | $g_i = \partial_{\hat y_i}\, l(y_i,\hat y_i)$ | Direction/rate to nudge prediction $i$ to reduce loss | §8.4, §18.5 |
+| Hessian (2nd order) | $h_i = \partial^2_{\hat y_i}\, l(y_i,\hat y_i)$ | Curvature of the loss — lets XGBoost take a more precise step than gradient alone | §8.4 |
+| Shrinkage | $\hat y \mathrel{+}= \eta \cdot f_k(x)$ | Each new tree's output scaled by learning rate $\eta$ before being added | §8.5 |
+| L1 regularization | $\lambda \sum \lvert w_i \rvert$ | Penalizes weight magnitude; can zero weights out (sparsifying) | §7.1, §8.6, §18.3 |
+| L2 regularization | $\lambda \sum w_i^2$ | Penalizes weight magnitude quadratically; shrinks without zeroing | §7.1, §8.6, §18.3 |
+| Accuracy | $\frac{TP+TN}{\text{total}}$ (multi-class: correct / total) | Overall fraction correct, all classes weighted equally by frequency | §10.2 |
+| Precision | $\frac{TP}{TP+FP}$ | Of everything predicted positive, how much was right | §10.3 |
+| Recall / Sensitivity | $\frac{TP}{TP+FN}$ | Of everything truly positive, how much was caught | §10.4, §18.8 |
+| Specificity | $\frac{TN}{TN+FP}$ | Of everything truly negative, how much was correctly cleared | §18.8 |
+| F1 score | $2 \cdot \frac{P \cdot R}{P+R}$ (harmonic mean of precision & recall) | Single number balancing precision and recall | §10.5 |
+| Macro F1 | $\frac{1}{K}\sum_k F1_k$ | Unweighted average across classes — rare classes count equally | §10.6 |
+| Weighted F1 | $\sum_k \frac{n_k}{n} F1_k$ | Average weighted by class frequency — common classes dominate | §10.6 |
+| Micro F1 | pooled $TP,FP,FN$ across all classes, then one F1 | Mathematically equals accuracy for single-label multi-class | §18.9 |
+| Balanced accuracy | $\frac{1}{K}\sum_k \text{Recall}_k$ | Average per-class recall — another imbalance-robust alternative to accuracy | §10.9 |
+| ROC-AUC | Area under TPR-vs-FPR curve | P(random positive ranked above random negative) | §18.7 |
+| Bootstrap out-of-bag probability | $\left(1-\frac1n\right)^n \to e^{-1} \approx 0.368$ | Why ~37% of rows are excluded from a given bootstrap sample | §7.3, §18.10 |
+| Euclidean distance (k-NN / SMOTE) | $\sqrt{\sum_f (x_{i,f}-x_{j,f})^2}$ | Straight-line distance between two points in feature space | §6.3, §18.14 |
+| SMOTE synthetic point | $x_{new}=x_i+\delta(x_{neighbour}-x_i),\ \delta\in[0,1]$ | Interpolates a new point between a minority point and one of its neighbours | §6.3 |
+| Min-Max scaling | $x' = \frac{x-x_{min}}{x_{max}-x_{min}}$ | Rescales a feature into $[0,1]$ | §5.5 |
+| Z-score standardization | $z = \frac{x-\mu}{\sigma}$ | Rescales a feature to mean 0, standard deviation 1 | §5.5 |
+| Yeo-Johnson transform | Piecewise power transform, §5.6's full formula | Makes a skewed distribution closer to symmetric/Normal, handles negatives unlike Box-Cox | §5.6 |
+| Bias-variance decomposition | $\text{Error} = \text{Bias}^2 + \text{Variance} + \text{Irreducible Error}$ | Three sources of total expected model error | §8.7, §18.2 |
+
+---
+
+# 20. Design Decisions — Rapid-Fire Defence
+
+Every one of these is phrased the way an examiner would fire it at you. Answer in one or two sentences, then stop — over-explaining under pressure reads as less confident, not more thorough. Full reasoning and cross-references are given; the bolded line is the answer to *say*.
+
+**Why median imputation, not mean?** *"Median is robust to the outliers financial ratios routinely have; a handful of extreme companies would drag the mean away from what's typical, but leave the median untouched."* (§5.4)
+
+**Why not KNN imputation?** *"The training data has zero missing values, so a fancier imputer buys nothing here — it only matters for a genuinely gappy uploaded file, where simple imputation is still a proportionate, fast, easy-to-explain choice given the added complexity KNN imputation isn't earning."* (§5.4)
+
+**Why one-hot encoding for `Sector`, not target/label encoding?** *"`Sector` is unordered — label encoding would invent a false numeric ranking, and at only 12 categories, one-hot's dimensionality cost is trivial. Target encoding (or CatBoost's ordered statistics) earns its keep at much higher cardinality than this."* (§5.4, §17.4)
+
+**Why is SMOTE discussed but not used?** *"SMOTE needs careful handling — Euclidean distance is scale-sensitive, and a mixed numeric/categorical space needs SMOTENC rather than vanilla SMOTE, plus discipline to fit it only inside the training fold. None of that infrastructure is built yet; `sample_weight`-based reweighting was tested instead, in the XGBoost notebook, and found effective without those risks."* (§6.3, §9.7)
+
+**Why not ADASYN over SMOTE, if either were implemented?** *"ADASYN focuses synthetic points on the hardest, most ambiguous boundary region rather than distributing them uniformly — a reasonable refinement, but neither is implemented here, so this is a 'which would I try first' answer, not a defended choice."* (§6.3)
+
+**Why split before any imbalance correction, not after?** *"Any oversampling must happen only inside the training fold — synthesizing points before splitting, or from data that includes the test fold, would leak information about test rows into training, inflating reported performance dishonestly."* (§5.9)
+
+**Why is there no calibration step?** *"There isn't one — `predict.py`'s probabilities are raw model output, never checked against actual outcome frequencies. This is a real, named gap, not an oversight I'm unaware of."* (§18.6)
+
+**Why `GridSearchCV`/`RandomizedSearchCV` instead of Optuna?** *"Optuna's main edge — efficient, pruned search over large search spaces — isn't the binding constraint at the notebook's search size; scikit-learn's own tools avoided adding a new dependency for a search this size."* (§9.5)
+
+**Why a single train/test split, not train/validation/test?** *"The notebook's `GridSearchCV`/`RandomizedSearchCV` calls use proper cross-validation within the training fold for their own internal validation — a separate, static validation partition wasn't additionally carved out on top of that for the main pipeline."* (§5.8, §9.7)
+
+**Why `random_state=42` specifically?** *"No mathematical significance — it's a conventional seed choice. Any fixed integer gives identical reproducibility; 42 is just idiomatic in the Python data science community."* (§5.8)
+
+**Why macro F1 as the tie-breaker metric, not balanced accuracy?** *"Macro F1 and balanced accuracy are closely related — both average per-class performance equally rather than weighting by frequency — but macro F1 additionally folds in precision, not just recall, which matters here because a model could have perfect Distressed recall by over-predicting Distressed constantly, and only F1's precision component would catch that."* (§10.6, §10.9)
+
+**Why SHAP over LIME?** See §11.8's full dedicated treatment — SHAP's game-theoretic consistency guarantees are the headline reason.
+
+**Why Python?** *"It's the standard for the entire ML ecosystem this project depends on — pandas, scikit-learn, XGBoost, SHAP have no equally mature equivalent elsewhere."* (§4.2)
+
+**Why Node.js/Express for the web layer instead of a Python-native framework (Flask/FastAPI)?** This is explicitly flagged in §13.10 and §17.5 checklist as the one answer only you can supply from personal reasoning — have it ready, stated honestly, not invented.
+
+**Why these four algorithms specifically?** *"A deliberate spread across model philosophy — linear/probabilistic (Logistic Regression), single tree (Decision Tree), bagged ensemble (Random Forest), boosted ensemble (XGBoost) — covering the major structural families for tabular classification without redundant close cousins."* (§16.7)
+
+**Why not binary classification (Distressed vs. not) instead of 4 classes?** *"Binary framing throws away the Investment-High/Investment-Low/Speculative gradation that's genuinely useful for a lender pricing risk, not just flagging failure — 4 classes preserves more of the real-world investment-grade/speculative-grade/distressed structure agencies actually use (§3.3) while staying statistically learnable, unlike the original 10-notch scale."*
+
+**Why collapse 10 rating notches into 4, and not some other number?** *"It mirrors the real investment-grade/speculative-grade boundary bond markets already use, refined into 4 tiers — fewer classes than 10 keeps every class statistically learnable (the smallest 10-class bucket was ~0.05% of the data) while retaining more nuance than a binary split."* (§3.3)
+
+---
+
+# 21. Common Mistakes — What Trips Up Students in General ML Vivas
+
+These are broader than this project specifically — patterns examiners see across many FYPs, mapped to where this project stands on each.
+
+**Mistake: confusing accuracy with "the model is good."** *Why it's wrong:* under class imbalance, a trivial always-guess-the-majority model scores high accuracy while being useless (§6.2). *How examiners catch it:* ask for the accuracy of a model that always predicts the majority class, then ask why your model's number is only marginally better. *How this project avoids it:* macro F1 and per-class recall are reported alongside accuracy throughout (§10.1, §6.4).
+
+**Mistake: claiming a result is "statistically significant" (or the reverse) without a test.** *Why it's wrong:* "significant" has a precise statistical meaning (a computed p-value against a null hypothesis) — using it loosely to mean "a big enough number" is an immediate credibility loss with any statistically literate examiner. *How this project stands:* no formal significance test was run (§16.2) — the guide is careful throughout to say "gap" or "edge," never "significant," for exactly this reason.
+
+**Mistake: not knowing what your own preprocessing does to a specific edge case.** *Why it's wrong:* "what happens if a row has every feature missing?" or "what happens if a test-time company belongs to a Sector never seen in training?" are classic drill-down questions — not knowing your own `handle_unknown="ignore"` behaviour (§5.4) on the spot looks like you didn't write the code yourself. *How this project stands:* §5.3–§5.4 traces every preprocessing step exactly, including these edge cases explicitly.
+
+**Mistake: overclaiming causality from correlation or feature importance.** *Why it's wrong:* "debt ratio is the most important feature" (from SHAP or native importance) does not mean "high debt ratio *causes* a worse rating" in any experimental sense — it's an association the model learned, possibly confounded by other correlated ratios. *How to avoid it:* always phrase feature-importance findings as "the model relies heavily on X," never "X causes Y" (§11.7 covers SHAP's own limitations here explicitly).
+
+**Mistake: not being able to explain what a hyperparameter default *is*, only that it was "left at default."** *Why it's wrong:* "I didn't tune `max_depth`" is a weaker answer than "I left `max_depth` at 6, XGBoost's default, meaning..." — an examiner testing whether you understand the model, not just whether you ran a search. *How this project stands:* §8.6 and §9.6 name every default value explicitly, not just which parameters exist.
+
+**Mistake: presenting a random train/test split as if it were temporally or causally valid for a time-sensitive domain.** *Why it's wrong:* credit risk genuinely drifts over economic cycles — a random split can let information from a "future" row leak influence into a "past" prediction, or simply fail to test whether the model generalizes across time, which is the realistic deployment scenario. *How this project stands:* named explicitly as a limitation, not hidden (§1.5, §5.8, §5.9, §16.5).
+
+**Mistake: treating "I used SHAP" as automatically meaning "my model is now interpretable and trustworthy."** *Why it's wrong:* SHAP explains what the model *did*, not whether what it did is *correct* or *fair* — a confidently wrong model produces confident, coherent-looking SHAP explanations for its wrong answer just as readily as for a right one. *How to avoid it:* pair every SHAP claim with the underlying performance numbers, never present it as a substitute for accuracy/fairness evaluation (§11.7 makes this limitation explicit).
+
+**Mistake: not distinguishing what's in the *notebook* from what's in *production*.** *Why it's wrong:* this project specifically has real, meaningful daylight between the two (§9.7) — an examiner asking "does your deployed model use `sample_weight`?" expects "no, only the notebook's ablation study tested that," not a vague "yes, I looked into imbalance handling." *How to avoid it:* always specify which artifact (`train_models.py` vs. a specific notebook cell) a claim refers to.
+
+**Mistake: apologizing for limitations instead of stating them as scoped, deliberate boundaries.** *Why it's wrong:* "sorry, I didn't have time to do cross-validation" reads as weaker than "cross-validation wasn't implemented — here's what it would add and why single-split evaluation was judged sufficient for this project's scope." Same fact, very different impression. *How this project's tone models it:* every "not implemented" note throughout this guide (§5.5, §5.6, §6.3, §9.5, §10.8, §10.10, §18.6) is phrased as a scoped fact plus what it would add, never an apology.
+
+---
+
+# 22. Distinction Tiers — What Separates Pass, Credit, Distinction, High Distinction
+
+**Pass-level answer:** states *what* was done. *"I used XGBoost because it usually performs well on tabular data."* Correct, but generic — could be said about almost any tabular ML project, with no reference to *this* dataset, *this* result, or *this* code.
+
+**Credit-level answer:** states *what* and *why*, with a specific number. *"I used XGBoost because it reached 69.1% accuracy, the best of my four models, and handles the non-linear relationships Logistic Regression's 48.0% accuracy suggests it's missing."* Grounded in real numbers, but still comparing headline stats only.
+
+**Distinction-level answer:** states *what*, *why*, cites the *mechanism*, and preempts the obvious follow-up. *"XGBoost led on all three headline metrics — 69.1% accuracy, 0.6833 weighted F1, and critically 0.6032 macro F1, the largest gap over the field on the metric that actually reflects performance on the minority Distressed class. That lead is also the one in this project backed by a documented `GridSearchCV` search rather than an untraced hyperparameter choice, which is why I trust it more than the raw numbers alone would justify."* Mechanism-aware, ties multiple metrics together, and volunteers the caveat (documented vs. undocumented tuning) before being asked.
+
+**High-Distinction-level answer:** does all of the above, *and* names the boundary of the claim unprompted. *"XGBoost led on all three headline metrics, and unlike an earlier version of this pipeline, that lead is no longer a close call. But I haven't run a formal significance test — McNemar's or a bootstrap CI — so I can state the size of the gap precisely but not yet its statistical significance, and I'd want that before treating 'XGBoost is best' as more than the best evidence-supported guess available from a single test split. I'd also flag that this same tuning wasn't run for the other three models, so the whole four-way comparison isn't judging each model at its own best — only XGBoost's."* This answer is *more* impressive for stating the limitation, not despite it — it demonstrates the candidate understands the epistemic status of their own claim, which is precisely what separates genuine mastery from well-rehearsed talking points.
+
+**What makes an answer sound memorized, even if factually correct:** reciting a number without being able to explain where it came from if asked a follow-up ("why 0.6032 specifically — walk me through how that's computed from your confusion matrix"); using this document's exact phrasing verbatim without being able to paraphrase it differently on request; answering a slightly-reworded version of a rehearsed question with visible confusion rather than adapting.
+
+**What shows genuine understanding:** being able to derive a claimed number live from raw data (§18.4's worked Gini example is exactly this kind of check); correctly predicting what would happen to a result under a proposed *hypothetical* change never explicitly discussed in this guide (e.g., "what would happen to Random Forest's result if you set `max_features='sqrt'` instead of `'log2'`?" — §7.3's mechanism explanation should let you reason to an answer, not just recall one); catching and correcting your own earlier statement mid-answer if you realize it was imprecise.
+
+---
+
+# 23. Hidden Questions — What Separates Top Students
+
+These are the ones examiners use specifically to distinguish "learned the results" from "understands the mechanism." Each includes the mechanism-level answer, not just the surface one.
+
+**"What assumptions does SMOTE make that might not hold for financial ratio data?"** SMOTE assumes the feature space between a minority point and its nearest minority neighbour is *meaningful to interpolate across* — that a synthetic point halfway between two real Distressed companies' ratios represents a plausible, coherent company. For ratios with hard real-world bounds or non-linear relationships between each other (e.g., a synthetic `debtEquityRatio` interpolated without correspondingly interpolating `interestCoverage` consistently could represent a company that's financially incoherent — high leverage with implausibly strong debt-service ability), this assumption is shakier than it is for, say, image pixel interpolation. It also assumes Euclidean distance in the (possibly unscaled) feature space is a meaningful notion of "similar company" (§18.14) — not guaranteed without scaling.
+
+**"Why does XGBoost use second-order derivatives (the Hessian) instead of just the gradient, like the original GBM?"** A first-order-only method chooses each new tree's structure and leaf values based only on the *direction* of steepest loss reduction; using the Hessian (curvature) additionally tells the algorithm the *right step size* to take given how quickly the loss's slope itself is changing — analogous to Newton's method converging faster than plain gradient descent because it accounts for curvature, not just slope. Concretely, XGBoost's optimal leaf weight formula is $w^* = -\frac{\sum g_i}{\sum h_i + \lambda}$ — the Hessian sum appears directly in the denominator, meaning leaves with more curvature (more confident, more consistent gradient signal) get more conservative, better-calibrated weight updates than a gradient-only method would assign.
+
+**"What happens if calibration is skipped — concretely, not just 'the probabilities might be wrong'?"** Concretely: a lender using this tool's confidence score to decide "auto-approve if >90% confidence, else escalate to a human" would auto-approve at a rate inconsistent with the model's actual accuracy at that stated confidence level — if the model is overconfident (a documented tendency of tree ensembles, §18.6), genuinely riskier cases could slip through the "high confidence" bucket at a higher real error rate than the 90%-confidence label implies, silently undermining the exact business safeguard the confidence score was meant to provide.
+
+**"When is SHAP misleading?"** Three concrete cases: (1) under strong feature correlation, SHAP can arbitrarily split credit between correlated features depending on background-sample composition, making any single feature's importance look smaller than its *effective* joint importance with its correlated partners (§11.7); (2) SHAP explains what the model learned, which — if the model itself is confidently wrong, poorly calibrated (§18.6), or trained on leaked/biased data — will produce a coherent-looking but ultimately misleading explanation for a bad prediction; (3) `TreeExplainer`'s default background dataset choice affects the "base value" (§18.12) individual contributions are measured against — a different background sample can shift the attributed importance without the model itself changing at all.
+
+**"Can accuracy increase while the model gets genuinely worse?"** Yes — the sharpest concrete case for this project: a hypothetical retrain that further collapses Distressed predictions toward the majority classes (e.g., predicting Distressed even less often than the current 5–7 times per 609-row test set, §6.4) could *raise* overall accuracy (since Distressed is only 3.6% of the data, sacrificing it costs little accuracy) while making the model strictly worse at the one thing a real lender needs most. This is precisely why §10.1's table reports macro F1 and per-class metrics alongside accuracy, not accuracy alone.
+
+**"What causes data leakage that isn't already covered in your leakage section?"** Beyond §5.9's named risks: **temporal leakage** via the random (non-temporal) split (§5.8, already flagged); **duplicate-row leakage** if the same company-date row somehow appears in both train and test due to any upstream data-quality issue (not verified as absent — `duplicate_rows: 0` in `training_summary.json`, §3.9, only confirms exact-duplicate rows, not near-duplicate different-date rows for the same company, §5.9's own noted risk); and, more subtly, **preprocessing-statistics leakage via hyperparameter search** — if a `GridSearchCV`'s cross-validation folds were constructed *after* a global preprocessing step fit on the whole training set (rather than the imputer/scaler being refit per-fold inside the `Pipeline`, as this project correctly does, §5.9), each fold's validation score would be silently contaminated.
+
+**"Your `Distressed` recall is worse for XGBoost's raw hyperparameter-tuned version than for the class-imbalance-handling version alone (§9.7) — doesn't that mean tuning is actively harmful for the minority class?"** No — this is a subtly wrong inference the numbers invite but don't support. Tuning-alone (Step 2) optimizes for *accuracy* (its search's `scoring` argument), not Distressed recall specifically, so it's unsurprising it doesn't match a change (`sample_weight`, Step 3) built specifically to help the minority class. The correct reading, per §9.7's actual headline finding, is that the two changes *interact* rather than one being "harmful" — combining them naively underperforms either alone, which argues for re-tuning jointly (optimizing accuracy/macro-F1 with `sample_weight` already applied), not for abandoning tuning.
+
+---
+
+# 24. Knowledge Map — How Everything Connects
+
+```mermaid
+flowchart TB
+    DATA["Raw dataset (2,029 rows, 10 rating notches)"] --> CLEAN["Cleaning & target grouping (§3.3, §3.6)\n10 notches -> 4 RatingGroup classes"]
+    CLEAN --> IMBAL["Class imbalance surfaces\n(Speculative 39% vs Distressed 3.6%, §6.1)"]
+    CLEAN --> PRE["Preprocessing (§5)\nmedian impute + one-hot + conditional Min-Max scale"]
+    PRE --> SPLIT["Stratified 70/30 train/test split (§5.8)\nrandom_state=42"]
+    SPLIT --> LEAK["Leakage safeguards (§5.9)\nPipeline fits only on train fold"]
+    SPLIT --> MODELS["Four models trained (§7)\nLR / Decision Tree / Random Forest / XGBoost"]
+    IMBAL -->|"tested, not in production"| SW["sample_weight ablation (§6.3, §9.7)"]
+    MODELS --> TUNE["Hyperparameter tuning (§9)\nGridSearchCV/RandomizedSearchCV -- XGBoost only"]
+    SW -.->|"interaction effect found"| TUNE
+    TUNE --> EVAL["Evaluation (§10)\naccuracy, precision, recall, macro/weighted F1"]
+    IMBAL --> EVAL
+    EVAL -->|"exposes the real weak point"| DISTRESSED["Distressed class: 9-23% recall\nacross all four models (§6.4)"]
+    MODELS --> SHAP["SHAP explainability (§11)\nnotebooks only, not the live app"]
+    EVAL --> SHAP
+    SHAP --> TRUST["Model trust & calibration gap (§18.6)\nraw probabilities never calibrated"]
+    DISTRESSED --> BUSINESS["Business framing (§1-2)\nthe class a lender cares about most\nis the class the model is worst at"]
+    TRUST --> BUSINESS
+    EVAL --> COMPARE["XGBoost vs Random Forest vs\nDecision Tree vs Logistic Regression (§7-8)"]
+    COMPARE --> ALTS["XGBoost vs untried alternatives\nSVM / NN / LightGBM / CatBoost (§17)"]
+```
+
+**How to read this in a viva.** Every arrow is a "why does X come before/relate to Y" question waiting to happen. A few of the highest-value connections to be able to narrate unprompted:
+
+- **Class imbalance (§6) touches almost everything downstream**: it's why accuracy alone misleads (§10.2), why macro F1 was chosen as the fairer metric (§10.6), why `sample_weight` was tested at all (§9.7), and why the Distressed class's poor recall (§6.4) is the project's single most important honest weakness (§16.1) — one root cause (72 Distressed rows out of 2,029) explains four separate downstream facts.
+- **Documentation asymmetry runs through §9, §16, and §17 together**: XGBoost's hyperparameters trace to a specific `GridSearchCV` cell (§9.7); the other three models' don't (§9.1, §9.6); this is why §16.1 names it as a critique, and it's also why §17's "XGBoost vs. untried alternatives" section can lean on a *documented* search when defending XGBoost specifically, but couldn't make the same claim for Random Forest.
+- **SHAP (§11) and calibration (§18.6) are connected by a shared gap**: both are about whether the model's outputs can be *trusted*, not just whether they're *accurate* — SHAP addresses "can I trust why it decided this," calibration addresses "can I trust how confident it claims to be," and this project has the first (in notebooks only) but not the second at all.
+- **The notebook/production split (§9.7) is the connective tissue between the ablation study and literally every claim about "what this project does."** Any claim about hyperparameters, imbalance handling, or early stopping must specify which side of that split it's describing — this single distinction resolves a large fraction of the sections above.
+
+---
+
+# 25. Feynman Test — Explaining This Project at Every Level
+
+**To a child.** "Imagine you're trying to guess if a lemonade stand is doing well or badly, just by looking at some numbers about it — how much money it has, how much it owes, how much it's making. I built a computer program that looked at thousands of real examples of businesses that were already labelled 'doing great,' 'doing okay,' 'struggling a bit,' or 'in real trouble,' and learned the pattern between the numbers and the label. Now it can look at a *new* business's numbers and guess which of those four groups it probably belongs to."
+
+**To a business executive.** "This tool takes a company's financial ratios — the same kind of numbers a credit analyst would review — and predicts which of four risk categories it likely falls into, based on patterns learned from about 2,000 real, already-rated companies. It's meant to be a fast first-pass screen, not a replacement for a human's final judgement: it gets the overall category right roughly 69% of the time, but it's noticeably weaker at flagging the riskiest 'Distressed' companies specifically — which is exactly the category that matters most for avoiding bad loans, so I wouldn't deploy this as a sole decision-maker yet."
+
+**To a banker.** "Four models were trained and compared on the same 609 held-out companies never used in training. XGBoost — a gradient-boosted decision tree ensemble — came out ahead on accuracy, weighted F1, and macro F1, with hyperparameters tuned via a documented grid search. But every model, including XGBoost, only catches 9–23% of the genuinely Distressed companies in the test set — the imbalance in the training data (Distressed is only 3.6% of it) means the model has comparatively little signal to learn that category from. I'd want that recall meaningfully higher, and I'd want the confidence scores calibrated against real outcome frequencies, before trusting this for an actual lending decision rather than a screening aid."
+
+**To a software engineer.** "It's a Node/Express server that shells out to a Python subprocess for inference — `predict.py` loads a pre-trained scikit-learn/XGBoost `Pipeline` object from a `.joblib` file, applies the exact same preprocessing that pipeline was fit with (so there's no training-serving skew), and returns JSON. Training happens offline via a separate script, `train_models.py`, which shares its preprocessing logic with `predict.py` through one common module specifically to avoid the two scripts silently diverging."
+
+**To a data scientist.** "Four-class classification on 25 features (24 numeric ratios, 1 one-hot-encoded categorical), 2,029 rows, stratified 70/30 split. XGBoost's hyperparameters come from a documented `GridSearchCV` over `n_estimators`/`max_depth`/`learning_rate`/`subsample`/`colsample_bytree`; the other three models' current hyperparameters are non-default but undocumented. An ablation study isolated hyperparameter tuning from `sample_weight`-based class reweighting and found they interact rather than compose additively — combining both individually-good changes underperformed either alone on macro F1 and Distressed F1, which is the single most methodologically interesting finding in the project. No calibration, no formal significance testing, no cross-validation on the final reported numbers — all named explicitly as scope limitations, not hidden."
+
+**To a university examiner.** Everything in §1 through §24 of this document, delivered with the register appropriate to whichever specific question is asked — the point of drilling all five registers above is that you should be able to *slide* between them mid-answer if an examiner's follow-up shifts register (e.g., starts technical, then asks "explain that again like I'm not an ML person") without losing content accuracy at any level.
+
+---
+
+# 26. Expanded Question Bank — Additional Questions by Difficulty Tier
+
+§15 already has 100+ categorized questions (A–G, by topic). This section adds further questions organized by **difficulty** instead, to round out toward comprehensive viva coverage. Answers are intentionally terser here than in §15 — cross-references point to the section with the full-length version where one exists.
+
+## 26.1 Easy (should be instant, no hesitation)
+
+1. What are the four target classes? → Investment-High, Investment-Low, Speculative, Distressed (§3.3).
+2. How many rows in the raw dataset? → 2,029 (§3.1).
+3. What's the train/test split ratio? → 70/30, stratified (§5.8).
+4. Which model is "primary"? → XGBoost, on all three headline metrics (§10.1).
+5. What library computes SHAP values? → `shap` (§13.8).
+6. What imputation strategy is used for numeric columns? → Median (§5.4).
+7. What encoding is used for `Sector`? → One-hot (§5.4).
+8. Is cross-validation used for the final reported numbers? → No, only inside the notebook's hyperparameter search (§5.8, §9.7).
+9. What does `random_state=42` guarantee? → Reproducible, identical results on every rerun (§5.8).
+10. Which class is smallest, and by how much? → Distressed, ~3.6% of the data (§6.1).
+11. What Python web framework serves the app? → None — Node.js/Express, calling Python as a subprocess (§4.2).
+12. Does the live app use SHAP? → No, notebooks only (§11.3).
+13. What's XGBoost's test accuracy? → 69.1% (§10.1).
+14. What scaling does XGBoost's pipeline use? → None — `scale_numeric=False` deliberately (§5.5).
+15. Is SMOTE used anywhere in this project? → No — tested conceptually only, never implemented (§6.3).
+
+## 26.2 Medium (requires connecting two concepts)
+
+16. Why does Random Forest need no feature scaling but Logistic Regression does? → Splits vs. weighted sums (§5.5).
+17. Why is `StratifiedKFold` used instead of plain `KFold` in the notebook's search? → Preserves class proportions per fold, critical given Distressed's 3.6% share (§5.8, §18.10).
+18. What would happen to `Sector`'s encoding if a 13th unseen sector appeared at prediction time? → `handle_unknown="ignore"` encodes it as all-zeros rather than crashing (§5.4).
+19. Why does XGBoost's `eval_metric="mlogloss"` matter for a 4-class problem specifically? → Selects multi-class log loss, not accuracy, as the quantity boosting rounds are fit against (§8, §18.5).
+20. Why might Decision Tree beat Logistic Regression despite being "simpler" in some sense? → Captures non-linear/threshold relationships Logistic Regression structurally cannot (§7.1–7.2).
+21. What's the relationship between `n_estimators` and `learning_rate` in XGBoost? → Lower learning rate needs more estimators to reach comparable fit; they're jointly tuned, not independent (§8.5).
+22. Why does macro F1 penalize Random Forest more than XGBoost, relatively speaking? → Random Forest's larger macro/weighted gap (0.119 vs. XGBoost's 0.080) reflects worse relative minority-class performance (§10.6).
+23. What's the practical effect of `handle_unknown="ignore"` combined with a genuinely important unseen category? → The model gets zero signal for that row's Sector, silently — a real, if edge-case, accuracy risk (§5.4).
+24. Why is `class_weight=None` for Logistic Regression notable given the class imbalance discussion? → It's an explicit choice to *not* apply the one imbalance technique scikit-learn offers for free (§6.3, §9.1).
+25. Why does `gamma=0` (XGBoost's default, still in effect in production) matter for overfitting risk? → No minimum loss-reduction required to split — every split that reduces loss at all, however marginally, is allowed (§8.6).
+
+## 26.3 Hard (requires synthesis across sections)
+
+26. If you retrained today with `sample_weight` added to XGBoost's current tuned hyperparameters, would you expect improvement — and how confident are you? → Not confidently — §9.7's interaction-effect finding shows the two changes don't compose additively when combined naively; a joint re-tune would be needed, not just an addition. (§9.7)
+27. Construct the argument for why Random Forest's `max_features="log2"` (rather than the default `"sqrt"`) could hurt as easily as help. → Narrower feature subsets per split increase tree diversity but also increase the chance any single split is suboptimal because a genuinely strong feature wasn't offered as a candidate — a bias/variance trade in the diversity direction, not a guaranteed win. (§7.3)
+28. Why is the ablation study's non-determinism finding (§9.7) itself methodologically important, beyond just being a caveat? → It means any single run's "best hyperparameters" table is a point estimate, not a stable ground truth — reporting one run's numbers as definitive without acknowledging this overstates certainty the search doesn't actually have.
+29. Explain why `training_summary.json`'s single point-accuracy numbers cannot, by themselves, tell you whether XGBoost's lead over Random Forest would replicate on a new random split. → No confidence interval or repeated-split variance estimate exists; a ~0.7-point gap on one 609-row split is consistent with, but not proof against, being within normal split-to-split noise. (§16.2, §18.11)
+30. If `Sector` were instead a 200-category feature, which of this project's current decisions would you revisit first, and why? → One-hot encoding — 200 extra columns is a genuine dimensionality problem now, making CatBoost's ordered target statistics (§17.4) or a hashing/embedding approach considerably more attractive than at 12 categories.
+
+## 26.4 Very Hard (open-ended, no single correct answer expected)
+
+31. Design the smallest possible experiment that would tell you whether Logistic Regression's remaining gap to the tree models (§7.1) is due to the linear-boundary assumption or the unexplored `C=100.0` regularization choice. → Model answer sketch: hold scaling and data fixed, sweep `C` across several orders of magnitude via cross-validation; if performance is flat across that sweep, the gap is structural (linearity); if performance varies substantially, regularization was a real contributor worth tuning properly.
+32. If you had to deploy exactly one of this project's four models with no further changes, and Distressed-class recall were the *only* metric a regulator would audit, which would you choose and why — even if it isn't the model with the best headline accuracy? → Requires reasoning from §6.4's table (XGBoost's 23% recall is highest, but still low) rather than reciting §10.1's accuracy ranking — a good answer notes even the "best" choice here is a weak one, and would propose the `sample_weight`-based ablation-study fix as a precondition for any real deployment recommendation.
+33. Is it defensible to call this project's SHAP analysis "explainable AI" given it never touches the deployed model's actual predictions? → Open-ended; a strong answer distinguishes *the model class* being explainable in principle (SHAP works on the same fitted `.joblib` artifacts the app serves) from *this specific deployment* not exposing that explanation to a real user — the capability exists, the delivery doesn't (§11.3).
+
+## 26.5 "Impossible" (no defensible complete answer exists — the correct move is naming that, not guessing)
+
+34. What is this model's true generalization accuracy on the full population of real-world SMEs, not just this dataset's ~2,000 large, mostly-listed companies? → Cannot be known from this data alone — the dataset's population (§1.5's stated limitation) doesn't match the target deployment population (unlisted SMEs); this is an extrapolation question with no answer available in the current evidence.
+35. Would this model's ranking of "best algorithm" hold if retrained on a materially different but equally legitimate rating dataset? → Unknowable without that second dataset; the honest answer names this as an open generalization question, not a confident prediction either way.
+36. Is the ~10.8:1 imbalance ratio in this data representative of real-world SME credit risk, or an artifact of how this specific dataset's companies were selected/labelled? → Cannot be determined from within this project alone — would require comparing against independent, known-representative population statistics this project doesn't have access to.
+
+---
+
+# 27. Final Distinction Checklist
 
 Work through this before your evaluation. Each item should be something you can do without hesitation, not something you'd need to look up.
 
@@ -1767,10 +2261,10 @@ Work through this before your evaluation. Each item should be something you can 
 
 ## Honest Self-Critique (this is what separates a distinction from a pass)
 
-- [ ]  Can state, unprompted and without being asked "what's wrong with your project," at least three genuine weaknesses: no feature scaling, no imbalance correction, no cross-validation (§16)
-- [ ]  Can explain exactly *why* Logistic Regression underperforms, using both the scaling gap and the linear-boundary limitation (§7.1, §16.1)
+- [ ]  Can state, unprompted and without being asked "what's wrong with your project," at least three genuine weaknesses: no class-imbalance correction in production despite finding one that works in the XGBoost notebook, undocumented hyperparameters for three of the four models, no cross-validation on the final reported numbers (§16)
+- [ ]  Can explain exactly *why* Logistic Regression still underperforms even after scaling was added, using the linear-boundary limitation and the untested `C=100.0` regularization choice (§7.1, §16.1)
 - [ ]  Can explain exactly why every model struggles on the Distressed class, tying it to class imbalance mechanics, not just stating "the data was imbalanced" (§6, §6.4)
-- [ ]  Can propose the single highest-leverage next improvement (`class_weight="balanced"`) and explain why it's higher-leverage than SMOTE for this project's remaining time budget (§6.3, evaluator Q67)
+- [ ]  Can propose the single highest-leverage next improvement (carrying `sample_weight="balanced"` from the XGBoost ablation study into production, re-tuned jointly rather than combined naively) and explain why it's higher-leverage than SMOTE for this project's remaining time budget (§6.3, §9.7, evaluator Q67)
 
 ## Presentation and Delivery
 

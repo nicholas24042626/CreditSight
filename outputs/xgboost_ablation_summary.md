@@ -1,8 +1,8 @@
 # XGBoost Ablation Study — CreditSight
 
-**Source notebook:** `notebook/xgboost/xgboost.ipynb` — an "XGBoost Ablation Study" block (Sections 1–7) inserted right after Step 7 (the baseline confusion matrix) and before the team's Min-Max Normalization / Experiment 7 / Experiment 8 / SHAP cells, which are unmodified and still run correctly afterward.
+**Source notebook:** `notebook/xgboost/xgboost.ipynb` — an "XGBoost Ablation Study" block (Sections 1–7) inserted right after Step 7 (the baseline confusion matrix) and before the team's Min-Max Normalization / Experiment 7 / Experiment 8 / SHAP cells. Experiment 7 and Experiment 8's `GridSearchCV` `param_grid` were since widened to also search `reg_alpha`, `reg_lambda`, and `gamma` (matching the parameter set Section 2's `RandomizedSearchCV` already searched), so those two cells are no longer unmodified relative to the team's original version — everything else about them (search method, `X_train`/`X_test` handling, scoring) is unchanged.
 **Dataset:** `data/set A corporate_rating.csv`
-**Scope:** XGBoost only. Decision Tree, Random Forest, and Logistic Regression, and the shared files `python/common.py` / `python/train_models.py`, were not touched by this work.
+**Scope:** XGBoost only. Decision Tree, Random Forest, and Logistic Regression were not touched by this work. `python/train_models.py`'s XGBoost hyperparameters have since been updated separately to match Experiment 7's original 5-parameter `GridSearchCV` result (`n_estimators=200, max_depth=5, learning_rate=0.1, subsample=0.8, colsample_bytree=1.0`) — that production change happened outside this ablation study and predates the `reg_alpha`/`reg_lambda`/`gamma` grid widening described above, so it does not yet reflect the wider 8-parameter search.
 
 ---
 
@@ -282,7 +282,7 @@ Run all cells in `notebook/xgboost/xgboost.ipynb` top to bottom (Kernel → Rest
 section (right after Step 7, before Min-Max Normalization) regenerates `ablation_records` from scratch
 each run.
 
-One thing to know before re-running for a final report figure:
+Two things to know before re-running for a final report figure:
 
 - **Non-determinism:** `RandomizedSearchCV` in Step 2 uses `n_jobs=-1`, so the exact winning
   hyperparameter configuration (and downstream numbers) can shift meaningfully between runs — this
@@ -292,3 +292,7 @@ One thing to know before re-running for a final report figure:
   combination interaction effect exists) have held across every run so far, but exact figures have not.
   Re-run once immediately before capturing final numbers for the report, and quote the numbers from that
   specific run.
+- **Experiment 7 and Experiment 8 now run noticeably slower.** Widening their `param_grid` from 5 to 8
+  parameters grows the grid from 2⁵=32 to 2⁸=256 combinations, so each `GridSearchCV.fit()` call (5-fold
+  CV) now trains 1,280 models instead of 160 — expect several minutes per cell instead of seconds. This
+  does not affect Sections 1–7 (the ablation study proper), only the two `GridSearchCV` cells after it.
