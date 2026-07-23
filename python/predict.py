@@ -359,6 +359,48 @@ def summarize_model_parameters(model_key: str, artifact: dict[str, object]) -> d
     return sanitize_json_value(parameters)
 
 
+def validate_random_forest_pipeline(artifact: dict[str, object]) -> None:
+    pipeline = artifact.get("pipeline")
+    if not hasattr(pipeline, "named_steps"):
+        raise ValueError("The saved Random Forest artifact does not contain a fitted sklearn Pipeline.")
+
+    model = pipeline.named_steps.get("model")
+    if model is None or model.__class__.__name__ != "RandomForestClassifier":
+        raise ValueError("The saved Random Forest artifact does not contain a RandomForestClassifier model.")
+
+    expected_parameters = {
+        "n_estimators": 100,
+        "criterion": "gini",
+        "max_depth": 20,
+        "min_samples_split": 5,
+        "min_samples_leaf": 1,
+        "max_features": "sqrt",
+        "bootstrap": False,
+        "class_weight": None,
+        "random_state": 42,
+    }
+    actual_parameters = model.get_params(deep=False)
+    mismatches = {
+        key: {"expected": expected, "actual": actual_parameters.get(key)}
+        for key, expected in expected_parameters.items()
+        if actual_parameters.get(key) != expected
+    }
+    if mismatches:
+        raise ValueError(
+            "The saved Random Forest artifact does not match the final tuned notebook parameters: "
+            + json.dumps(mismatches)
+        )
+
+    scaler_names = {"MinMaxScaler", "StandardScaler", "MaxAbsScaler", "RobustScaler", "Normalizer"}
+    for _name, step in pipeline.named_steps.items():
+        if step.__class__.__name__ in scaler_names:
+            raise ValueError("The saved Random Forest pipeline contains normalization.")
+        if hasattr(step, "get_params"):
+            for component in step.get_params(deep=True).values():
+                if component.__class__.__name__ in scaler_names:
+                    raise ValueError("The saved Random Forest pipeline contains normalization.")
+
+
 def build_prediction_rows(
     input_df: pd.DataFrame,
     predicted_labels: list[str],
@@ -431,6 +473,8 @@ def main() -> None:
         feature_columns = artifact["feature_columns"]
         label_encoder = artifact["label_encoder"]
         pipeline = artifact["pipeline"]
+        if model_key == "random_forest":
+            validate_random_forest_pipeline(artifact)
         probability_class_labels = artifact.get("encoder_class_labels") or list(label_encoder.classes_)
         prediction_mode = classify_input_frame(input_df, feature_columns)
 
@@ -514,12 +558,18 @@ def main() -> None:
             "classification_report_text": artifact["metrics"]["classification_report_text"],
             "class_labels": CLASS_ORDER,
             "prediction_count": len(predicted_labels),
+            "total_records": len(predicted_labels),
             "predictions": predictions,
             "warnings": warnings,
             "unsupported_columns": unsupported_columns,
             "manual_metadata": metadata,
             "output_csv": str(Path(args.output)),
         }
+        if model_key == "random_forest":
+            payload["metrics_note"] = (
+                "Random Forest final tuned test accuracy is 71.26% on Dataset A's held-out test set, "
+                "not the uploaded company file."
+            )
 
         if prediction_mode == "manual" and predictions:
             payload["predicted_risk_category"] = predictions[0]["predicted_rating_group"]

@@ -168,9 +168,9 @@
           <div><span>Risk category</span><strong id="predictedRisk">-</strong></div>
           <div><span>Confidence score</span><strong id="predictionConfidence">-</strong></div>
           <div><span>Rows processed</span><strong id="predictionCount">-</strong></div>
-          <div><span>Current Test Accuracy</span><strong id="accuracy">-</strong></div>
-          <div><span>Current Test Weighted F1</span><strong id="weightedF1">-</strong></div>
-          <div><span>Current Test Macro F1</span><strong id="macroF1">-</strong></div>
+          <div><span>Final Test Accuracy</span><strong id="accuracy">-</strong></div>
+          <div><span>Final Test Weighted F1</span><strong id="weightedF1">-</strong></div>
+          <div><span>Final Test Macro F1</span><strong id="macroF1">-</strong></div>
         </div>
         <div id="modelParametersBox" class="model-parameters hidden">
           <h3>Active Model Settings</h3>
@@ -223,12 +223,13 @@
               <th>Company</th>
               <th>Predicted RatingGroup</th>
               <th>Confidence Score</th>
+              <th>Class Distribution</th>
               <th>Top Feature Contributions</th>
             </tr>
           </thead>
           <tbody>
             <tr>
-              <td colspan="5" class="empty-state">Run an analysis to see prediction rows.</td>
+              <td colspan="6" class="empty-state">Run an analysis to see prediction rows.</td>
             </tr>
           </tbody>
         </table>
