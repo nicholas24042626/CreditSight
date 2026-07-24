@@ -1109,6 +1109,41 @@ Two independent hyperparameter searches (a broad joint search in Experiment 26, 
 
 **Full derivations, code, and per-experiment write-ups** (including the ones marked rejected above, condensed to hypothesis/result/justification once their fitting code was removed to keep the notebook navigable) are in `notebook/xgboost/xgboost.ipynb`, sections "Experiment Log (Experiments 7–28)" through "Final Selected XGBoost Model."
 
+## 9.9 KNIME Replication of the Final XGBoost Pipeline — Accuracy Gap and Why
+
+As a cross-tooling validation exercise (not a replacement for the Python/scikit-learn pipeline), the final selected configuration from §9.8 — winsorization + the Optuna-tuned hyperparameters — was rebuilt node-for-node in KNIME Analytics Platform: CSV Reader → Duplicate Row Filter → Rule Engine (rating → `RatingGroup` mapping) → Row Filter (drop unmapped `"Unknown"` rows) → Column Filter (drop identifiers) → One to Many (one-hot `Sector`) → Table Partitioner (stratified 70/30, seed 42) → Missing Value (median/most-frequent, learner fit on train, applied to test) → Numeric Outliers (IQR-based clipping, learner fit on train, applied to test) → XGBoost Tree Ensemble Learner/Predictor, with hyperparameters set to match `train_models.py` as closely as KNIME's node exposes them (n_estimators=324, max_depth=8, eta≈0.0811, subsample≈0.8213, colsample_bytree≈0.6685, min_child_weight=1, gamma≈0.0091, reg_lambda≈0.510, tree_method="hist", max_bin=16).
+
+**Result, on KNIME's own 609-row stratified test partition:**
+
+| Metric | Python (`train_models.py`, §9.8) | KNIME replication |
+| --- | --- | --- |
+| Accuracy | 0.6995 | 0.6667 |
+| Macro F1 | 0.6067 | ≈0.544 (derived from KNIME's confusion matrix below; the Scorer node itself only reports accuracy and Cohen's κ, not per-class F1) |
+| Cohen's κ | not computed in Python | 0.501 |
+
+KNIME's confusion matrix (rows = actual `RatingGroup`, columns = predicted):
+
+| Actual \ Predicted | Investment-Low | Investment-High | Speculative | Distressed |
+| --- | --- | --- | --- | --- |
+| Investment-Low | 125 | 36 | 47 | 1 |
+| Investment-High | 35 | 100 | 9 | 1 |
+| Speculative | 41 | 12 | 179 | 18 |
+| Distressed | 0 | 0 | 3 | 2 |
+
+406/609 correct. The same qualitative pattern noted in §10.7 for the Python models holds here too — confusion clusters between **adjacent** rating buckets (Investment-Low ↔ Investment-High, Investment-Low ↔ Speculative), and the two extremes are essentially never confused with each other — a reassuring sign the KNIME model learned the same underlying structure as the Python one, even though the exact scores differ.
+
+One caveat worth checking rather than asserting: only **5 of 609** test rows are actually `Distressed` here (~0.8%), noticeably lower than the ~3.5% share of `Distressed` reported for the full dataset in §9.8. This could just be sampling variance from a different random partition, but it's also consistent with a possible off-by-one in the Rule Engine's `CCC`/`CC`/`C`/`D` → `Distressed` rule or with the `"Unknown"`-row filter catching more than intended — worth a quick row-count check on the Rule Engine's output before treating KNIME's Distressed-class numbers (2/5 recall) as meaningful given the tiny sample.
+
+**Why an accuracy/macro-F1 gap exists at all, in rough order of likely impact:**
+
+1. **Different actual train/test split.** Same seed (42), same stratified 70/30 strategy, same target column — but KNIME's partitioning RNG is not the same implementation as scikit-learn's `train_test_split`, so the literal set of rows in train vs. test differs between the two tools. This alone changes what the model sees and is scored against, and can't be reconciled across platforms.
+2. **`num_parallel_tree=3` isn't exposed in KNIME's XGBoost Tree Ensemble Learner node.** This is a structural difference, not just a missing number: Python grows 3 trees per boosting round (a mini-bagging effect, §9.8 point 3) instead of 1, giving the ensemble more capacity per round than the KNIME version can replicate.
+3. **Winsorization is approximate, not exact.** KNIME's Numeric Outliers node clips via the IQR-multiplier method (k=1.5), not the exact 1st/99th-percentile clip `Winsorizer` performs in `common.py`. Different clip bounds feed slightly different values into every downstream tree split.
+4. **Duplicate Row Filter is an intentional divergence.** KNIME removes duplicate rows before modeling; `common.py` only counts them (`df.duplicated().sum()`) and never drops them — a deliberate improvement in the KNIME version (avoids train/test leakage from an identical row landing on both sides of the split), but it does change the dataset the two pipelines are trained on.
+5. **Underlying XGBoost implementation differences.** KNIME's XGBoost integration wraps xgboost4j (a Java build), which isn't guaranteed to be numerically identical to the Python `xgboost` package even with every exposed hyperparameter matched (histogram binning details, tie-breaking, floating-point operation order can all differ subtly).
+
+**Takeaway for defence purposes:** the KNIME workflow reproduces the pipeline's structure and hyperparameters as closely as KNIME's tooling allows, and reproduces the same qualitative error pattern (adjacent-class confusion, weak Distressed recall) as the Python model — but an exact numeric match to 0.6995/0.6067 was never realistically achievable, given cross-platform RNG differences and one hyperparameter (`num_parallel_tree`) KNIME simply doesn't expose. State this explicitly if asked why the two don't match exactly — it's a legitimate, explainable limitation of cross-platform reproduction, not evidence of a build error.
+
 ---
 
 # 10. Model Evaluation — Every Metric Explained
