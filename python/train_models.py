@@ -210,14 +210,17 @@ def main() -> None:
         },
         "random_forest": {
             "estimator": RandomForestClassifier(
-                random_state=42,
-                n_estimators=200,
+                n_estimators=100,
+                criterion="gini",
                 max_depth=20,
-                max_features="log2",
-                min_samples_split=2,
                 min_samples_leaf=1,
+                min_samples_split=5,
+                max_features="sqrt",
+                bootstrap=False,
+                class_weight=None,
+                random_state=42,
             ),
-            "scale_numeric": True,
+            "scale_numeric": False,
         },
         "logistic_regression": {
             "estimator": LogisticRegression(

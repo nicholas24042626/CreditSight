@@ -164,7 +164,7 @@ function clearResults() {
   confusionMatrix.innerHTML = '<div class="empty-state">Run an analysis to see the matrix.</div>';
   classificationReport.textContent = "Run an analysis to see the report.";
   predictionTable.querySelector("tbody").innerHTML =
-    '<tr><td colspan="5" class="empty-state">Run an analysis to see prediction rows.</td></tr>';
+    '<tr><td colspan="6" class="empty-state">Run an analysis to see prediction rows.</td></tr>';
   downloadLink.href = "#";
   downloadLink.classList.add("disabled");
   currentPredictions = [];
@@ -185,6 +185,16 @@ function formatConfidence(value) {
     return "N/A";
   }
   return Number(value).toFixed(4);
+}
+
+function formatClassDistribution(probabilities) {
+  if (!probabilities || typeof probabilities !== "object") {
+    return "Unavailable";
+  }
+
+  return Object.entries(probabilities)
+    .map(([label, probability]) => `${label}: ${formatPercent(probability)}`)
+    .join(", ");
 }
 
 function renderConfusionMatrix(matrix, labels) {
@@ -550,7 +560,7 @@ function renderPredictionRows(rows) {
   currentPredictions = rows;
 
   if (!rows || !rows.length) {
-    body.innerHTML = '<tr><td colspan="5" class="empty-state">Run an analysis to see prediction rows.</td></tr>';
+    body.innerHTML = '<tr><td colspan="6" class="empty-state">Run an analysis to see prediction rows.</td></tr>';
     renderFeatureContributions(null);
     return;
   }
@@ -563,6 +573,7 @@ function renderPredictionRows(rows) {
           <td>${escapeHtml(row.company_name || "-")}</td>
           <td>${escapeHtml(row.predicted_rating_group)}</td>
           <td>${formatConfidence(row.confidence_score)}</td>
+          <td>${escapeHtml(formatClassDistribution(row.class_probabilities))}</td>
           <td>${escapeHtml(row.top_contributions_text || "Unavailable")}</td>
         </tr>`
     )
