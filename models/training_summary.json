@@ -1,5 +1,5 @@
 {
-  "trained_at": "2026-07-23T15:11:21.648042Z",
+  "trained_at": "2026-07-24T10:16:43.383180Z",
   "source_data": "data\\set A corporate_rating.csv",
   "target_column": null,
   "dataset_summary": {
@@ -214,8 +214,7 @@
           2
         ]
       ],
-      "classification_report_text": "                 precision    recall  f1-score   support\n\nInvestment-High       0.71      0.69      0.70       148\n Investment-Low       0.71      0.64      0.67       201\n    Speculative       0.72      0.84      0.78       238\n     Distressed       0.50      0.09      0.15        22\n\n       accuracy                           0.71       609\n      macro avg       0.66      0.57      0.58       609\n   weighted avg       0.71      0.71      0.70       609\n",
-      "final_model_note": "Final hyperparameter-tuned Random Forest from notebook Experiment 7; no normalization."
+      "classification_report_text": "                 precision    recall  f1-score   support\n\nInvestment-High       0.71      0.69      0.70       148\n Investment-Low       0.71      0.64      0.67       201\n    Speculative       0.72      0.84      0.78       238\n     Distressed       0.50      0.09      0.15        22\n\n       accuracy                           0.71       609\n      macro avg       0.66      0.57      0.58       609\n   weighted avg       0.71      0.71      0.70       609\n"
     },
     {
       "model_name": "logistic_regression",
@@ -281,64 +280,64 @@
         "callbacks": null,
         "colsample_bylevel": null,
         "colsample_bynode": null,
-        "colsample_bytree": 1.0,
+        "colsample_bytree": 0.6684815593910434,
         "device": null,
         "early_stopping_rounds": null,
-        "enable_categorical": true,
+        "enable_categorical": false,
         "eval_metric": "mlogloss",
         "feature_types": null,
         "feature_weights": null,
-        "gamma": null,
+        "gamma": 0.009096143390093125,
         "grow_policy": null,
         "importance_type": null,
         "interaction_constraints": null,
-        "learning_rate": 0.1,
-        "max_bin": null,
+        "learning_rate": 0.08110932021587948,
+        "max_bin": 16,
         "max_cat_threshold": null,
         "max_cat_to_onehot": null,
         "max_delta_step": null,
-        "max_depth": 5,
+        "max_depth": 8,
         "max_leaves": null,
-        "min_child_weight": null,
+        "min_child_weight": 1,
         "missing": null,
         "monotone_constraints": null,
         "multi_strategy": null,
-        "n_estimators": 200,
+        "n_estimators": 324,
         "n_jobs": null,
-        "num_parallel_tree": null,
+        "num_parallel_tree": 3,
         "random_state": 42,
         "reg_alpha": null,
-        "reg_lambda": null,
+        "reg_lambda": 0.5098610905755356,
         "sampling_method": null,
         "scale_pos_weight": null,
-        "subsample": 0.8,
-        "tree_method": null,
+        "subsample": 0.8212663057499048,
+        "tree_method": "hist",
         "validate_parameters": null,
         "verbosity": null
       },
       "metrics": {
-        "accuracy": 0.6912972085385879,
-        "weighted_f1": 0.6833321202684962,
-        "macro_f1": 0.6032286008626713
+        "accuracy": 0.6995073891625616,
+        "weighted_f1": 0.6907813591760162,
+        "macro_f1": 0.6066734113549911
       },
       "confusion_matrix": [
         [
-          99,
-          35,
+          100,
+          34,
           14,
           0
         ],
         [
-          33,
-          119,
+          34,
+          118,
           49,
           0
         ],
         [
-          14,
-          24,
-          198,
-          2
+          9,
+          23,
+          203,
+          3
         ],
         [
           1,
@@ -347,7 +346,7 @@
           5
         ]
       ],
-      "classification_report_text": "                 precision    recall  f1-score   support\n\nInvestment-High       0.67      0.67      0.67       148\n Investment-Low       0.67      0.59      0.63       201\n    Speculative       0.71      0.83      0.77       238\n     Distressed       0.71      0.23      0.34        22\n\n       accuracy                           0.69       609\n      macro avg       0.69      0.58      0.60       609\n   weighted avg       0.69      0.69      0.68       609\n"
+      "classification_report_text": "                 precision    recall  f1-score   support\n\nInvestment-High       0.69      0.68      0.68       148\n Investment-Low       0.67      0.59      0.63       201\n    Speculative       0.72      0.85      0.78       238\n     Distressed       0.62      0.23      0.33        22\n\n       accuracy                           0.70       609\n      macro avg       0.68      0.59      0.61       609\n   weighted avg       0.70      0.70      0.69       609\n"
     }
   ]
 }

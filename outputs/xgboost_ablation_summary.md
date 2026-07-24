@@ -1,8 +1,9 @@
 # XGBoost Ablation Study — CreditSight
 
-**Source notebook:** `notebook/xgboost/xgboost.ipynb` — an "XGBoost Ablation Study" block (Sections 1–7) inserted right after Step 7 (the baseline confusion matrix) and before the team's Min-Max Normalization / Experiment 7 / Experiment 8 / SHAP cells. Experiment 7 and Experiment 8's `GridSearchCV` `param_grid` were since widened to also search `reg_alpha`, `reg_lambda`, and `gamma` (matching the parameter set Section 2's `RandomizedSearchCV` already searched), so those two cells are no longer unmodified relative to the team's original version — everything else about them (search method, `X_train`/`X_test` handling, scoring) is unchanged.
+**Source notebook:** `notebook/xgboost/xgboost.ipynb` — an "XGBoost Ablation Study" block (Sections 1–8) inserted right after Step 7 (the baseline confusion matrix) and before the team's Min-Max Normalization / Experiment 7 / Experiment 8 / SHAP cells. Section 6 (scoring objective) was added later, replacing two ad hoc "Improvement 2" diagnostic cells that used to sit after Experiment 7/8 instead of inside the ablation study proper. Experiment 7 and Experiment 8 (later in the same notebook) use their own, separately-evolved `GridSearchCV` grid — not covered by this report.
 **Dataset:** `data/set A corporate_rating.csv`
-**Scope:** XGBoost only. Decision Tree, Random Forest, and Logistic Regression were not touched by this work. `python/train_models.py`'s XGBoost hyperparameters have since been updated separately to match Experiment 7's original 5-parameter `GridSearchCV` result (`n_estimators=200, max_depth=5, learning_rate=0.1, subsample=0.8, colsample_bytree=1.0`) — that production change happened outside this ablation study and predates the `reg_alpha`/`reg_lambda`/`gamma` grid widening described above, so it does not yet reflect the wider 8-parameter search.
+**Scope:** XGBoost only. Decision Tree, Random Forest, and Logistic Regression were not touched by this work. `python/train_models.py`'s XGBoost hyperparameters have since been updated separately to match Experiment 7's `GridSearchCV` result — that production change happened outside this ablation study.
+**Numbers below** are from a full, fresh top-to-bottom execution of the notebook (`jupyter nbconvert --to notebook --execute --inplace`), not hand-edited — see §13 for the non-determinism caveat this implies.
 
 ---
 
@@ -18,9 +19,7 @@ than its parts.
 
 This notebook section is that ablation study, built directly into `notebook/xgboost/xgboost.ipynb`
 rather than a separate script, so it sits next to the model it's testing and reuses its exact data
-pipeline. It was rebuilt once already to sit on top of a teammate's later push that added a "Final SHAP
-Feature Importance" cell depending on the notebook's `Experiment 8` output — the ablation section is
-positioned before that work, not in place of it, so nothing downstream broke.
+pipeline.
 
 ## 2. Dataset and fixed setup
 
@@ -61,7 +60,7 @@ Every ablation step below:
 - Is recorded into a running `ablation_records` list inside the notebook, under names prefixed
   `ablation_*` so nothing collides with the team's later Min-Max/Experiment/SHAP cells, which reuse
   plain names like `pipeline`, `metrics`, and `best_pipeline`.
-- Is consolidated by Section 7 into the table below and written to
+- Is consolidated by Section 8 into the table below and written to
   `outputs/xgboost_ablation_summary.csv`.
 
 ## 4. Step 1 — Baseline
@@ -95,8 +94,8 @@ point every later step is measured against.
 ## 5. Step 2 — Hyperparameter tuning only
 
 **What changed:** ran `RandomizedSearchCV` (40 candidate configurations, 5-fold stratified CV, scored
-on accuracy) over `n_estimators`, `learning_rate`, `max_depth`, `subsample`, `colsample_bytree`,
-`reg_alpha`, `reg_lambda`, and `gamma`. Search space:
+on accuracy) over `n_estimators`, `learning_rate`, `max_depth`, `subsample`, `colsample_bytree`.
+Search space:
 
 ```python
 {
@@ -105,34 +104,29 @@ on accuracy) over `n_estimators`, `learning_rate`, `max_depth`, `subsample`, `co
     "model__max_depth": [3, 4, 5, 6, 8],
     "model__subsample": [0.6, 0.7, 0.8, 0.9, 1.0],
     "model__colsample_bytree": [0.6, 0.7, 0.8, 0.9, 1.0],
-    "model__reg_alpha": [0, 0.01, 0.1, 1.0],
-    "model__reg_lambda": [0.5, 1.0, 1.5, 2.0],
-    "model__gamma": [0, 0.1, 0.3, 0.5],
 }
 ```
 
-**What did not change:** no early stopping, no `sample_weight`, no monotonic constraints. Search ran
-only on `X_train`; the winning configuration was scored once on `X_test`.
+**What did not change:** no early stopping, no `sample_weight`, no monotonic constraints, no
+regularization parameters (`reg_alpha`/`reg_lambda`/`gamma` stay at XGBoost's defaults — only the five
+parameters above are searched). Search ran only on `X_train`; the winning configuration was scored once
+on `X_test`.
 
-**Best configuration found** (best CV accuracy 0.6556):
+**Best configuration found** (best CV accuracy 0.6648):
 
 ```python
-{'n_estimators': 200, 'max_depth': 6, 'learning_rate': 0.1, 'subsample': 0.8,
- 'colsample_bytree': 0.9, 'reg_alpha': 0.1, 'reg_lambda': 2.0, 'gamma': 0.1}
+{'subsample': 0.7, 'n_estimators': 200, 'max_depth': 8, 'learning_rate': 0.1, 'colsample_bytree': 1.0}
 ```
 
-**Result:** Accuracy **0.6814** (+1.80 points vs baseline), Macro F1 0.5850 (+3.59 points vs
-baseline), Distressed F1 0.3077 (up from 0.2069).
+**Result:** Accuracy **0.6798** (+1.64 points vs baseline), Macro F1 0.5800 (+3.09 points vs
+baseline), Distressed F1 0.2857 (up from 0.2069).
 
-**Reading it:** this run's best configuration turned out close to XGBoost's own defaults
-(`max_depth=6`, moderate `learning_rate=0.1`, light regularization) rather than the far-shallower or
-far-deeper extremes in the search space — and it improved *every* metric over baseline, including
-macro F1 and the Distressed class specifically. That's a notably cleaner win than a previous run of
-this same search (before the notebook was rebased onto the team's SHAP update), which had instead found
-a deep, low-learning-rate configuration that boosted accuracy while quietly costing Distressed-class
-performance. `RandomizedSearchCV`'s `n_jobs=-1` parallelism makes the exact winning configuration
-non-deterministic between runs even with `random_state` fixed (see §12) — worth keeping in mind if this
-step is re-run for the final report.
+**Reading it:** the search found a deeper tree (`max_depth=8` vs the default 6) with a lower learning
+rate than the default (0.1 vs 0.3) and moderate subsampling — a fairly standard "more capacity, more
+regularization via sampling" combination, and it improved every metric over baseline. `RandomizedSearchCV`'s
+`n_jobs=-1` parallelism makes the exact winning configuration non-deterministic between runs even with
+`random_state` fixed (see §13) — the specific hyperparameters above are this run's result, not a fixed
+constant.
 
 ## 6. Step 3 — Class imbalance handling only
 
@@ -143,14 +137,13 @@ the 792-row Speculative class dominate the 72-row Distressed class.
 
 **What did not change:** no hyperparameter tuning, no early stopping, no monotonic constraints.
 
-**Result:** Accuracy 0.6732 (+0.98 points vs baseline), Macro F1 **0.5890** (best of all six steps,
-+3.99 points vs baseline), Distressed F1 **0.3158** (best of all six steps, up from 0.2069).
+**Result:** Accuracy 0.6732 (+0.98 points vs baseline), Macro F1 **0.5890** (best of all seven
+individual/scoring steps, +3.99 points vs baseline), Distressed F1 **0.3158**, up from 0.2069.
 
 **Reading it:** this remains the best individual step for macro F1 and for the Distressed class
-specifically — exactly the effect class weighting is supposed to have, and (as before) it costs
-comparatively little accuracy to get there. Of the two individually winning changes this run, this one
-is the most directly aligned with fixing the dataset's core weakness (severe class imbalance) rather
-than just fitting the majority classes harder.
+specifically — exactly the effect class weighting is supposed to have, and it costs comparatively little
+accuracy to get there. This step is deterministic (no random search involved), so its numbers are stable
+across re-runs.
 
 ## 7. Step 4 — Early stopping only
 
@@ -170,7 +163,7 @@ early-stopping run (4b):
 | 4b. `n_estimators=1000` + early stopping, stopped at iteration 20 | **0.6420** | **0.5420** |
 
 **Result vs the Step-1 baseline:** Accuracy 0.6420 (−2.14 points), Macro F1 0.5420 (−0.71 points) — the
-worst of all six steps on both metrics.
+worst of all seven individual/scoring steps on both metrics.
 
 **Reading it:** early stopping didn't just fail to help — it underperformed *both* comparison points,
 including its own fair one (4a). Stopping at iteration 20 out of a possible 1000 is very aggressive;
@@ -179,15 +172,16 @@ dataset) well before the model had actually converged on the full signal. This s
 as "early stopping doesn't work for this problem" — it should be read as "these particular settings
 (15% slice, 20-round patience, default learning rate) stopped too early." A follow-up worth trying:
 larger patience (e.g. `early_stopping_rounds=50`) or a lower `learning_rate` paired with early stopping,
-which is the combination early stopping is normally used with.
+which is the combination early stopping is normally used with. This step is deterministic and matched
+exactly across the previous and current runs of this study.
 
 ## 8. Step 5 — `tree_method="hist"` only
 
 **What changed:** baseline hyperparameters + `tree_method="hist"`. Nothing else.
 
 **Result:** Accuracy 0.6634, Macro F1 0.5491 — **identical to the baseline to four decimal places**.
-Training time 0.760s vs 0.675s for the baseline run in this run (timing is noisy at this dataset size
-and not a reliable signal either way — see §8 reasoning below).
+Training time 0.295s vs 0.301s for the baseline run in this run (timing is noisy at this dataset size
+and not a reliable signal either way).
 
 **Reading it:** the accuracy result is expected, not a bug — XGBoost 3.0.4 (the version installed in
 this project) already uses histogram-based split-finding by default (`tree_method="auto"` resolves to
@@ -195,12 +189,40 @@ this project) already uses histogram-based split-finding by default (`tree_metho
 value isn't in this table at all: it's the lever that would let a `RandomizedSearchCV` like Step 2
 search more candidates in the same wall-clock budget on a larger dataset. On this dataset (1420 training
 rows), any speed difference is within the noise of a single run and doesn't change what's practical to
-search.
+search. This step is deterministic and matched exactly across runs.
 
-## 9. Step 6 — Final combination
+## 9. Step 6 — Scoring objective: `scoring="f1_macro"` only
+
+**What changed:** identical setup to Step 2 (same `RandomizedSearchCV` grid, `n_iter=40`, 5-fold
+`StratifiedKFold`) — the only variable changed is the search's `scoring` argument, from `"accuracy"` to
+`"f1_macro"`. This isolates the effect of the search objective itself, independent of every other
+choice. It replaces two ad hoc "Improvement 2" diagnostic cells that previously tested this same idea
+against Experiment 7/8's own separately-tuned baselines instead of the shared Step-1 baseline used by
+every other section here.
+
+**Best configuration found** (best CV macro F1 0.5698):
+
+```python
+{'subsample': 0.7, 'n_estimators': 200, 'max_depth': 8, 'learning_rate': 0.1, 'colsample_bytree': 1.0}
+```
+
+**Result:** Accuracy 0.6798, Macro F1 0.5800, Distressed F1 0.2857 — **identical to Step 2's result to
+four decimal places.**
+
+**Reading it — this is the headline finding of this section:** scoring on `f1_macro` instead of
+`accuracy` selected the *exact same* hyperparameter configuration as Step 2. On this grid and this
+dataset, the search objective alone does not change which hyperparameters `RandomizedSearchCV` lands on
+— a clean, verified negative result, not an assumption. This does not mean scoring objective never
+matters (Section 3's `sample_weight`-based imbalance handling still shows the value of directly
+targeting the minority class), only that *for this specific 5-parameter grid*, accuracy and macro F1
+apparently agree closely enough across candidates that both scoring functions rank the same winner top.
+
+## 10. Step 7 — Final combination
 
 **Decision rule:** a step is included in the combination only if it beat the Step-1 baseline on
-accuracy **or** macro F1. Applied automatically inside the notebook (not hand-picked):
+accuracy **or** macro F1. Applied automatically inside the notebook (not hand-picked). Step 6 (scoring
+objective) is not a candidate for inclusion here — it's a diagnostic on Step 2's search, not an
+independent lever, so including it would double-count Step 2's hyperparameters.
 
 | Step | Beat baseline? | Included in combination |
 | --- | --- | --- |
@@ -212,87 +234,88 @@ accuracy **or** macro F1. Applied automatically inside the notebook (not hand-pi
 **Combined configuration:**
 
 ```python
-{'random_state': 42, 'eval_metric': 'mlogloss', 'n_estimators': 200, 'max_depth': 6,
- 'learning_rate': 0.1, 'subsample': 0.8, 'colsample_bytree': 0.9, 'reg_alpha': 0.1,
- 'reg_lambda': 2.0, 'gamma': 0.1}
+{'random_state': 42, 'eval_metric': 'mlogloss', 'subsample': 0.7, 'n_estimators': 200,
+ 'max_depth': 8, 'learning_rate': 0.1, 'colsample_bytree': 1.0}
 # + sample_weight = compute_sample_weight("balanced", y_train)
 ```
 
-**Result:** Accuracy 0.6732, Macro F1 0.5718, Distressed F1 0.2581.
+**Result:** Accuracy **0.6831**, Macro F1 **0.6063**, Distressed F1 **0.3750** — the best result in
+the table on every metric, including the Distressed class.
 
-**Interaction effect — the headline finding of this study:** the combination matches Step 3's accuracy
-exactly but underperforms **both** individual steps on macro F1, and underperforms Step 3 specifically
-on the Distressed class it was best at:
+**No interaction effect this run — a different result from an earlier run of this study.** An earlier
+execution of this same ablation study found that combining Steps 2 and 3 *underperformed* both
+individual steps on macro F1 and Distressed F1 (an interaction effect, documented as this report's
+previous headline finding). In this fresh run, the combination instead **improves on both individual
+steps on every metric measured**:
 
 | Comparison | Accuracy | Macro F1 | Distressed F1 |
 | --- | --- | --- | --- |
-| Best individual step (Step 2, tuning alone) | 0.6814 | 0.5850 | 0.3077 |
-| Best individual step (Step 3, imbalance alone) | 0.6732 | 0.5890 | 0.3158 |
-| Final combination (2 + 3 together) | 0.6732 | 0.5718 | 0.2581 |
+| Step 2 (tuning alone) | 0.6798 | 0.5800 | 0.2857 |
+| Step 3 (imbalance alone) | 0.6732 | 0.5890 | 0.3158 |
+| Step 7 (2 + 3 combined) | **0.6831** | **0.6063** | **0.3750** |
 
-Both individual gains partially erode when combined — accuracy settles at Step 3's level rather than
-Step 2's, and macro F1 / Distressed F1 both come in below either individual step. This is measured
-evidence that these two changes interact rather than stacking cleanly additively, even in a run where
-both individual changes look like unambiguous wins on their own. This is exactly the kind of result a
-bundled all-at-once tuning attempt (like the earlier one that dropped accuracy from 68.1% to 63.2%)
-cannot distinguish from "the whole approach doesn't work" — here it's visible as a specific,
-attributable interaction between two changes, each of which works fine alone.
+This reversal is itself the most important methodological point in this report: **whether these two
+changes interact or stack additively is not a fixed property of the model — it varies between runs**,
+because Step 2's search is non-deterministic (`RandomizedSearchCV` with `n_jobs=-1`, see §13). A single
+run's combination result is not reliable evidence either way; only a repeated-run or repeated-split
+methodology (as later experiments in the notebook, past this ablation study, adopt via a 15-split
+harness) can distinguish "these changes interact" from "this run's search landed somewhere that happened
+not to combine well."
 
-## 10. Full comparison table
+## 11. Full comparison table
 
 | Step | Accuracy | Macro F1 | Weighted F1 | Investment-High F1 | Investment-Low F1 | Speculative F1 | Distressed F1 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 1. Baseline | 0.6634 | 0.5491 | 0.6537 | 0.6485 | 0.5849 | 0.7563 | 0.2069 |
-| 2. Hyperparameter tuning only | **0.6814** | **0.5850** | 0.6709 | 0.6621 | 0.6032 | **0.7672** | 0.3077 |
-| 3. Class imbalance handling only | 0.6732 | 0.5890 | 0.6696 | **0.6867** | **0.6198** | 0.7339 | **0.3158** |
+| 2. Hyperparameter tuning only | 0.6798 | 0.5800 | 0.6711 | 0.6526 | 0.6221 | 0.7597 | 0.2857 |
+| 3. Class imbalance handling only | 0.6732 | 0.5890 | 0.6696 | 0.6867 | 0.6198 | 0.7339 | 0.3158 |
 | 4. Early stopping only | 0.6420 | 0.5420 | 0.6337 | 0.6355 | 0.5685 | 0.7240 | 0.2400 |
 | 5. `tree_method="hist"` only | 0.6634 | 0.5491 | 0.6537 | 0.6485 | 0.5849 | 0.7563 | 0.2069 |
-| 6. Final combination | 0.6732 | 0.5718 | 0.6665 | 0.6667 | 0.6146 | 0.7480 | 0.2581 |
+| 6. Scoring objective (f1_macro) only | 0.6798 | 0.5800 | 0.6711 | 0.6526 | 0.6221 | 0.7597 | 0.2857 |
+| 7. Final combination | **0.6831** | **0.6063** | **0.6773** | **0.6779** | 0.6146 | 0.7579 | **0.3750** |
 
 Bold marks the best value in each column. Machine-readable version (same numbers, plus the full free-text
 notes per row): `outputs/xgboost_ablation_summary.csv`.
 
-## 11. Conclusions and recommendations
+## 12. Conclusions and recommendations
 
-1. **No single lever is a clean win on every axis.** Tuning and class-weighting both improve on the
-   baseline individually across all metrics measured here, but they improve on *different* things most
-   (tuning: raw accuracy and Speculative/Investment-High F1; class weighting: macro F1 and Distressed
-   F1) — early stopping (as configured) and `tree_method="hist"` (on this dataset size) don't help at
-   all.
-2. **If the report needs one number, state which objective it optimizes for.** "Best accuracy and best
-   macro F1 among the tuning-only changes" is Step 2 (0.6814 / 0.5850); "best Distressed-class handling"
-   is Step 3 (Distressed F1 0.3158). For a credit-risk tool, where failing to flag a genuinely distressed
-   company is the costlier error, Step 3's Distressed-class strength is worth weighing against Step 2's
-   slightly higher headline numbers.
-3. **Combining winning changes isn't automatically better — verify, don't assume.** Steps 2 and 3 each
-   improve on the baseline individually, but combined they underperform both on macro F1 and the
-   Distressed class specifically. Any future tuning work on this model should re-test combinations
-   rather than assuming individual gains stack.
+1. **The scoring objective alone doesn't change the search outcome, on this grid.** Step 6 found the
+   identical hyperparameters as Step 2 despite optimizing a different metric (`f1_macro` vs `accuracy`)
+   — a genuine ablation result, not an assumption. Don't extrapolate this to "scoring never matters":
+   Section 3's `sample_weight` approach shows targeting the minority class directly still works; it's
+   specifically the *search objective* axis, isolated from every other change, that made no difference
+   here.
+2. **Whether combined changes interact is not a fixed property — it can flip between runs.** This run's
+   Step 7 combination *improved* on both individual steps on every metric; an earlier run of the same
+   study found the opposite (an interaction effect where the combination underperformed both). Both
+   results are real, correctly-measured outcomes of the same code — the difference is `RandomizedSearchCV`
+   non-determinism in Step 2 propagating downstream. **Report which run a headline number comes from, and
+   don't treat a single run's combination result as conclusive** — a repeated-split methodology (used
+   later in the same notebook, past this ablation study) is what settles this properly.
+3. **If the report needs one number, state which run and which objective it optimizes for.** In this
+   run, Step 7 (the combination) is the best result on every metric, including the Distressed class
+   (F1 0.3750) — a stronger conclusion than either individual step alone gave in this run, though see
+   point 2 above before treating that as guaranteed to reproduce.
 4. **Early stopping is worth a second attempt, not abandonment.** The specific configuration tested here
    (15% validation slice, 20-round patience, default learning rate) stopped too early; a larger patience
    value or pairing it with a lower learning rate (the combination it's designed for) is a reasonable
-   next experiment.
+   next experiment. This step's result has been identical across every run of this study so far (it's
+   deterministic).
 5. **`tree_method="hist"` is a non-issue for this dataset size**, and confirmed as such rather than
-   assumed — useful to note in the report as a deliberate check rather than an omission.
+   assumed — identical to baseline across every run of this study so far.
 
-## 12. Reproducing this study
+## 13. Reproducing this study
 
 Run all cells in `notebook/xgboost/xgboost.ipynb` top to bottom (Kernel → Restart & Run All, or
 `jupyter nbconvert --to notebook --execute --inplace notebook/xgboost/xgboost.ipynb`). The ablation
 section (right after Step 7, before Min-Max Normalization) regenerates `ablation_records` from scratch
 each run.
 
-Two things to know before re-running for a final report figure:
-
-- **Non-determinism:** `RandomizedSearchCV` in Step 2 uses `n_jobs=-1`, so the exact winning
-  hyperparameter configuration (and downstream numbers) can shift meaningfully between runs — this
-  document's Step 2 configuration and results differ from an earlier run of the same search before the
-  notebook was rebased onto the team's SHAP update, even though nothing about Step 2's code changed. The
-  qualitative conclusions (imbalance handling wins on Distressed F1, early stopping underperforms, a
-  combination interaction effect exists) have held across every run so far, but exact figures have not.
-  Re-run once immediately before capturing final numbers for the report, and quote the numbers from that
-  specific run.
-- **Experiment 7 and Experiment 8 now run noticeably slower.** Widening their `param_grid` from 5 to 8
-  parameters grows the grid from 2⁵=32 to 2⁸=256 combinations, so each `GridSearchCV.fit()` call (5-fold
-  CV) now trains 1,280 models instead of 160 — expect several minutes per cell instead of seconds. This
-  does not affect Sections 1–7 (the ablation study proper), only the two `GridSearchCV` cells after it.
+**Non-determinism, demonstrated, not just warned about:** `RandomizedSearchCV` in Step 2 (and Step 6,
+which shares its grid) uses `n_jobs=-1`, so the exact winning hyperparameter configuration can shift
+between runs even with `random_state` fixed. This is not hypothetical — it is the documented reason
+this report's §10 "no interaction effect" finding differs from an earlier run's "interaction effect"
+finding, using the exact same code both times. Steps 1, 3, 4, and 5 are deterministic and have matched
+exactly across every run so far; only Steps 2, 6, and 7 (which depend on Step 2's search) vary. Re-run
+once immediately before capturing final numbers for any report, and quote the numbers from that specific
+run — including which finding (interaction effect present or absent) that run produced.

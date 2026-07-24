@@ -22,6 +22,7 @@ from common import (
     TARGET_ALIASES,
     build_model_artifact,
     build_preprocessor,
+    build_winsorized_preprocessor,
     clean_rating_label,
     coerce_feature_types,
     create_rating_group,
@@ -118,11 +119,14 @@ def train_single_model(
     dataset_summary: dict,
     output_dir: Path,
     scale_numeric: bool = False,
+    preprocessor=None,
 ):
     # This section builds and trains one model at a time.
+    if preprocessor is None:
+        preprocessor = build_preprocessor(numeric_columns, categorical_columns, scale_numeric=scale_numeric)
     pipeline = Pipeline(
         steps=[
-            ("preprocessor", build_preprocessor(numeric_columns, categorical_columns, scale_numeric=scale_numeric)),
+            ("preprocessor", preprocessor),
             ("model", estimator),
         ]
     )
@@ -234,21 +238,38 @@ def main() -> None:
             "scale_numeric": True,
         },
         "xgboost": {
+            # Final selected configuration from notebook/xgboost/xgboost.ipynb's "Final Selected
+            # XGBoost Model" section: winsorization (see preprocessor below) + Optuna-tuned
+            # hyperparameters (Experiment 19) + num_parallel_tree=3 (Experiment 15) +
+            # tree_method="hist", max_bin=16 (Experiment 23). Validated at 0.6995 accuracy /
+            # 0.6067 macro F1 on this same train/test split - see FYP_STUDY_GUIDE.md §9.8.
             "estimator": XGBClassifier(
                 random_state=42,
                 eval_metric="mlogloss",
-                n_estimators=200,
-                max_depth=5,
-                learning_rate=0.1,
-                subsample=0.8,
-                colsample_bytree=1.0,
+                n_estimators=324,
+                max_depth=8,
+                learning_rate=0.08110932021587948,
+                subsample=0.8212663057499048,
+                colsample_bytree=0.6684815593910434,
+                min_child_weight=1,
+                gamma=0.009096143390093125,
+                reg_lambda=0.5098610905755356,
+                num_parallel_tree=3,
+                tree_method="hist",
+                max_bin=16,
             ),
             "scale_numeric": False,
+            "preprocessor": "winsorized",
         },
     }
 
     results = []
     for model_name, model_spec in models.items():
+        if model_spec.get("preprocessor") == "winsorized":
+            model_preprocessor = build_winsorized_preprocessor(numeric_columns, categorical_columns)
+        else:
+            model_preprocessor = None
+
         results.append(
             train_single_model(
                 model_name=model_name,
@@ -265,6 +286,7 @@ def main() -> None:
                 dataset_summary=summary,
                 output_dir=output_dir,
                 scale_numeric=model_spec["scale_numeric"],
+                preprocessor=model_preprocessor,
             )
         )
 

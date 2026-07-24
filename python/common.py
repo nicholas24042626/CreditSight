@@ -10,6 +10,7 @@ from typing import Dict, List, Tuple
 import joblib
 import numpy as np
 import pandas as pd
+from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.metrics import classification_report, confusion_matrix
@@ -657,6 +658,67 @@ def build_preprocessor(
 
     numeric_pipe = Pipeline(steps=numeric_steps)
 
+    categorical_pipe = Pipeline(
+        steps=[
+            ("imputer", SimpleImputer(strategy="most_frequent")),
+            ("onehot", one_hot),
+        ]
+    )
+
+    return ColumnTransformer(
+        transformers=[
+            ("numeric", numeric_pipe, numeric_columns),
+            ("categorical", categorical_pipe, categorical_columns),
+        ],
+        remainder="drop",
+    )
+
+
+class Winsorizer(BaseEstimator, TransformerMixin):
+    """Clips each numeric column to percentile bounds learned on the fit data only.
+
+    Ported from notebook/xgboost/xgboost.ipynb's "Improvement 3: Winsorization" cell - the
+    single largest individual accuracy gain found across that notebook's XGBoost ablation work.
+    """
+
+    def __init__(self, lower_quantile: float = 0.01, upper_quantile: float = 0.99):
+        self.lower_quantile = lower_quantile
+        self.upper_quantile = upper_quantile
+
+    def fit(self, X, y=None):
+        X = np.asarray(X, dtype=float)
+        self.lower_bounds_ = np.nanquantile(X, self.lower_quantile, axis=0)
+        self.upper_bounds_ = np.nanquantile(X, self.upper_quantile, axis=0)
+        return self
+
+    def transform(self, X):
+        X = np.asarray(X, dtype=float)
+        return np.clip(X, self.lower_bounds_, self.upper_bounds_)
+
+    def get_feature_names_out(self, input_features=None):
+        if input_features is not None:
+            return np.asarray(input_features, dtype=object)
+        return np.asarray([f"x{i}" for i in range(self.lower_bounds_.shape[0])], dtype=object)
+
+
+def build_winsorized_preprocessor(
+    numeric_columns: List[str],
+    categorical_columns: List[str],
+) -> ColumnTransformer:
+    """Same as build_preprocessor, but winsorizes numeric columns (1st/99th percentile clip,
+    learned on the fit data only) instead of passing them through untouched. Matches
+    notebook/xgboost/xgboost.ipynb's final selected XGBoost pipeline's preprocessing step."""
+    try:
+        one_hot = OneHotEncoder(handle_unknown="ignore", sparse_output=False)
+    except TypeError:
+        one_hot = OneHotEncoder(handle_unknown="ignore", sparse=False)
+
+    numeric_pipe = Pipeline(
+        steps=[
+            ("imputer", SimpleImputer(strategy="median")),
+            ("winsorizer", Winsorizer(lower_quantile=0.01, upper_quantile=0.99)),
+        ]
+    )
     categorical_pipe = Pipeline(
         steps=[
             ("imputer", SimpleImputer(strategy="most_frequent")),

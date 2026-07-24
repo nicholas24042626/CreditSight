@@ -339,6 +339,12 @@ def summarize_model_parameters(model_key: str, artifact: dict[str, object]) -> d
             "learning_rate",
             "subsample",
             "colsample_bytree",
+            "min_child_weight",
+            "gamma",
+            "reg_lambda",
+            "num_parallel_tree",
+            "tree_method",
+            "max_bin",
             "random_state",
             "eval_metric",
         ]
