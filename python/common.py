@@ -77,7 +77,18 @@ IDENTIFIER_ALIASES = [
     "date",
     "rating agency name",
 ]
-TARGET_ALIASES = ["rating", "credit rating", "issuer rating", "rating grade"]
+TARGET_ALIASES = [
+    "rating",
+    "credit rating",
+    "issuer rating",
+    "rating grade",
+    "rating group",
+    "ratinggroup",
+    "final grading",
+    "finalgrading",
+    "actual rating",
+    "true rating",
+]
 MODEL_NAME_MAP = {
     "decision_tree": "Decision Tree",
     "random_forest": "Random Forest",
@@ -165,6 +176,9 @@ def normalize_column_name(value: object) -> str:
 
 def compact_column_name(value: object) -> str:
     return re.sub(r"[^a-z0-9]+", "", normalize_column_name(value))
+
+
+CLASS_ORDER_LOOKUP = {compact_column_name(label): label for label in CLASS_ORDER}
 
 
 def build_controlled_aliases(name: str) -> List[str]:
@@ -598,6 +612,18 @@ def create_rating_group(rating_value: object) -> str | None:
         if rating in ratings:
             return group_name
     return None
+
+
+def normalize_uploaded_target_label(value: object) -> str | None:
+    rating = normalize_text(value)
+    if not rating:
+        return None
+
+    grouped_rating = create_rating_group(rating)
+    if grouped_rating:
+        return grouped_rating
+
+    return CLASS_ORDER_LOOKUP.get(compact_column_name(rating))
 
 
 def clean_rating_label(value: object) -> str:

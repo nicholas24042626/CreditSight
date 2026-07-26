@@ -20,10 +20,13 @@ from common import (
     build_raw_feature_frame,
     build_manual_feature_row,
     coerce_feature_types,
+    evaluate_predictions,
+    find_column,
     is_missing_value,
     load_artifact,
     load_tabular_file,
     normalize_column_name,
+    normalize_uploaded_target_label,
     standardize_columns,
     sanitize_json_value,
 )
@@ -533,6 +536,15 @@ def main() -> None:
         unsupported_columns: list[str] = compatibility["unsupported_columns"]
         warnings: list[str] = []
         metadata: dict[str, object] = {}
+        metrics_note = "These metrics come from Dataset A's held-out test set, not the uploaded company file."
+        metrics_source = "dataset_a_test"
+        dataset_a_metrics = artifact["metrics"]
+        uploaded_metrics = None
+        selected_metrics = dataset_a_metrics
+        selected_classification_report = dataset_a_metrics["classification_report_text"]
+        selected_confusion_matrix = dataset_a_metrics["confusion_matrix"]
+        metrics_rows_used: int | None = None
+        metrics_rows_total = len(input_df)
 
         if prediction_mode == "manual":
             prepared_features, metadata, _ = prepare_manual_features(input_df, artifact)
@@ -567,6 +579,36 @@ def main() -> None:
         )
         warnings.extend(shap_warnings)
 
+        target_column = find_column(input_df, TARGET_ALIASES)
+        if target_column:
+            true_labels = input_df[target_column].apply(normalize_uploaded_target_label)
+            valid_mask = true_labels.notna()
+            valid_count = int(valid_mask.sum())
+            if valid_count > 0:
+                if valid_count != len(input_df):
+                    skipped_count = len(input_df) - valid_count
+                    warnings.append(
+                        f"Computed uploaded-file metrics from {valid_count} labeled row(s) in '{target_column}'. "
+                        f"Skipped {skipped_count} row(s) with missing or unrecognized labels."
+                    )
+
+                y_true = true_labels[valid_mask].tolist()
+                y_pred = [predicted_labels[index] for index, keep in enumerate(valid_mask.tolist()) if keep]
+                uploaded_metrics = evaluate_predictions(np.asarray(y_true), np.asarray(y_pred), CLASS_ORDER)
+                selected_metrics = uploaded_metrics
+                selected_classification_report = uploaded_metrics["classification_report_text"]
+                selected_confusion_matrix = uploaded_metrics["confusion_matrix"]
+                metrics_note = (
+                    f"These metrics were calculated from the uploaded file using the '{target_column}' label column."
+                )
+                metrics_source = "uploaded_dataset"
+                metrics_rows_used = valid_count
+            else:
+                warnings.append(
+                    f"Found a target column named '{target_column}', but no valid rating labels were recognized. "
+                    "Dataset A metrics are shown instead."
+                )
+
         predictions = build_prediction_rows(
             input_df=input_df,
             predicted_labels=predicted_labels,
@@ -594,15 +636,27 @@ def main() -> None:
             "model_display_name": artifact.get("model_display_name", MODEL_NAME_MAP.get(model_key, model_key)),
             "model_parameters": summarize_model_parameters(model_key, artifact),
             "prediction_mode": prediction_mode,
+            "metrics_source": metrics_source,
+            "metrics_rows_used": metrics_rows_used,
+            "metrics_rows_total": metrics_rows_total,
             "compatibility_report": compatibility,
             "metrics": {
-                "baseline_test_accuracy": artifact["metrics"]["accuracy"],
-                "baseline_test_weighted_f1": artifact["metrics"]["weighted_f1"],
-                "baseline_test_macro_f1": artifact["metrics"]["macro_f1"],
+                "accuracy": selected_metrics["accuracy"],
+                "weighted_f1": selected_metrics["weighted_f1"],
+                "macro_f1": selected_metrics["macro_f1"],
+                "dataset_a_accuracy": dataset_a_metrics["accuracy"],
+                "dataset_a_weighted_f1": dataset_a_metrics["weighted_f1"],
+                "dataset_a_macro_f1": dataset_a_metrics["macro_f1"],
+                "uploaded_accuracy": uploaded_metrics["accuracy"] if uploaded_metrics else None,
+                "uploaded_weighted_f1": uploaded_metrics["weighted_f1"] if uploaded_metrics else None,
+                "uploaded_macro_f1": uploaded_metrics["macro_f1"] if uploaded_metrics else None,
+                "baseline_test_accuracy": dataset_a_metrics["accuracy"],
+                "baseline_test_weighted_f1": dataset_a_metrics["weighted_f1"],
+                "baseline_test_macro_f1": dataset_a_metrics["macro_f1"],
             },
-            "metrics_note": "These metrics come from Dataset A's held-out test set, not the uploaded company file.",
-            "confusion_matrix": artifact["metrics"]["confusion_matrix"],
-            "classification_report_text": artifact["metrics"]["classification_report_text"],
+            "metrics_note": metrics_note,
+            "confusion_matrix": selected_confusion_matrix,
+            "classification_report_text": selected_classification_report,
             "class_labels": CLASS_ORDER,
             "prediction_count": len(predicted_labels),
             "total_records": len(predicted_labels),
@@ -612,7 +666,7 @@ def main() -> None:
             "manual_metadata": metadata,
             "output_csv": str(Path(args.output)),
         }
-        if model_key == "random_forest":
+        if model_key == "random_forest" and metrics_source != "uploaded_dataset":
             payload["metrics_note"] = (
                 "Random Forest final tuned test accuracy is 71.26% on Dataset A's held-out test set, "
                 "not the uploaded company file."

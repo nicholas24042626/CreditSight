@@ -11,7 +11,8 @@ const predictionMode = document.getElementById("predictionMode");
 const predictedRisk = document.getElementById("predictedRisk");
 const predictionConfidence = document.getElementById("predictionConfidence");
 const predictionCount = document.getElementById("predictionCount");
-const accuracy = document.getElementById("accuracy");
+const datasetAAccuracy = document.getElementById("datasetAAccuracy");
+const uploadedAccuracy = document.getElementById("uploadedAccuracy");
 const weightedF1 = document.getElementById("weightedF1");
 const macroF1 = document.getElementById("macroF1");
 const modelParametersBox = document.getElementById("modelParametersBox");
@@ -317,7 +318,8 @@ function clearResults() {
   predictedRisk.textContent = "-";
   predictionConfidence.textContent = "-";
   predictionCount.textContent = "-";
-  accuracy.textContent = "-";
+  datasetAAccuracy.textContent = "-";
+  uploadedAccuracy.textContent = "N/A";
   weightedF1.textContent = "-";
   macroF1.textContent = "-";
   modelParametersBox.classList.add("hidden");
@@ -329,7 +331,7 @@ function clearResults() {
   }
   overallRiskSummary.className = "overall-risk-summary empty-state";
   overallRiskSummary.innerHTML = "Run an analysis to see company-level credit risk categories.";
-  metricsNote.textContent = "Model metrics shown here are based on Dataset A's test set, not the uploaded file.";
+  metricsNote.textContent = "Dataset A test accuracy is always shown. Uploaded file accuracy appears only when the upload includes labels.";
   warningsBox.className = "warnings hidden";
   warningsBox.innerHTML = "";
   featureContributions.className = "contribution-box empty-state";
@@ -991,11 +993,12 @@ function renderResponse(payload) {
   selectedModel.textContent = payload.model_display_name || payload.model_name || "-";
   predictionMode.textContent = payload.prediction_mode || "-";
   predictionCount.textContent = payload.prediction_count ?? "-";
-  accuracy.textContent = formatPercent(payload.metrics?.baseline_test_accuracy);
-  weightedF1.textContent = formatPercent(payload.metrics?.baseline_test_weighted_f1);
-  macroF1.textContent = formatPercent(payload.metrics?.baseline_test_macro_f1);
+  datasetAAccuracy.textContent = formatPercent(payload.metrics?.dataset_a_accuracy ?? payload.metrics?.baseline_test_accuracy);
+  uploadedAccuracy.textContent = formatPercent(payload.metrics?.uploaded_accuracy);
+  weightedF1.textContent = formatPercent(payload.metrics?.weighted_f1 ?? payload.metrics?.baseline_test_weighted_f1);
+  macroF1.textContent = formatPercent(payload.metrics?.macro_f1 ?? payload.metrics?.baseline_test_macro_f1);
   renderModelParameters(payload);
-  metricsNote.textContent = payload.metrics_note || "Model metrics shown here are based on Dataset A's test set, not the uploaded file.";
+  metricsNote.textContent = payload.metrics_note || "Dataset A test accuracy is always shown. Uploaded file accuracy appears only when the upload includes labels.";
   renderConfusionMatrix(payload.confusion_matrix, payload.class_labels || []);
   classificationReport.textContent = payload.classification_report_text || "Unavailable";
   renderOverallRiskSummary(payload.predictions || []);
