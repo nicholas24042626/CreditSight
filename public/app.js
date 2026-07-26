@@ -619,14 +619,12 @@ function renderCompatibilityTables(report) {
     .map((row) => {
       const statusLabel = row.status === "calculated" ? "Will be calculated" : row.status === "matched" ? "Matched" : "Missing";
       const sourceLabel = row.source_column ? escapeHtml(row.source_column) : (row.source_columns || []).join(", ");
-      const selectHtml = row.status === "missing"
-        ? "<span class=\"mapping-missing\">No reliable mapping found</span>"
-        : `<select data-feature-key="${escapeHtml(row.feature)}" ${row.status === "calculated" ? "disabled" : ""}>${buildSelectOptions(uploadedColumns, row.source_column || "")}</select>`;
+      const sourceHtml = sourceLabel || "<span class=\"mapping-missing\">No reliable mapping found</span>";
       const formulaLabel = row.formula ? `${escapeHtml(row.formula)}${row.source_columns && row.source_columns.length ? ` using ${escapeHtml(row.source_columns.join(", "))}` : ""}` : sourceLabel || "-";
       return `<tr>
         <td>${escapeHtml(row.feature)}</td>
         <td><span class="status-pill ${row.status}">${statusLabel}</span></td>
-        <td>${selectHtml}</td>
+        <td>${sourceHtml}</td>
         <td>${formulaLabel || "-"}</td>
       </tr>`;
     })
@@ -635,13 +633,11 @@ function renderCompatibilityTables(report) {
   rawFieldMappingTableBody.innerHTML = (report.raw_source_fields || [])
     .map((row) => {
       const statusLabel = row.status === "matched" ? "Matched" : "Missing";
-      const selectHtml = row.status === "missing"
-        ? "<span class=\"mapping-missing\">Not found</span>"
-        : `<select data-raw-key="${escapeHtml(row.raw_field)}">${buildSelectOptions(uploadedColumns, row.input_column || "")}</select>`;
+      const sourceHtml = row.input_column ? escapeHtml(row.input_column) : "<span class=\"mapping-missing\">Not found</span>";
       return `<tr>
         <td>${escapeHtml(row.raw_field.replaceAll("_", " "))}</td>
         <td><span class="status-pill ${row.status}">${statusLabel}</span></td>
-        <td>${selectHtml}</td>
+        <td>${sourceHtml}</td>
       </tr>`;
     })
     .join("");
