@@ -8,7 +8,6 @@ const runBatchButton = document.getElementById("runBatchButton");
 const statusBox = document.getElementById("statusBox");
 const selectedModel = document.getElementById("selectedModel");
 const predictionMode = document.getElementById("predictionMode");
-const predictedRisk = document.getElementById("predictedRisk");
 const predictionConfidence = document.getElementById("predictionConfidence");
 const predictionCount = document.getElementById("predictionCount");
 const datasetAAccuracy = document.getElementById("datasetAAccuracy");
@@ -315,7 +314,6 @@ function clearStatus() {
 function clearResults() {
   selectedModel.textContent = "-";
   predictionMode.textContent = "-";
-  predictedRisk.textContent = "-";
   predictionConfidence.textContent = "-";
   predictionCount.textContent = "-";
   datasetAAccuracy.textContent = "-";
@@ -1005,9 +1003,7 @@ function renderResponse(payload) {
   renderPredictionRows(payload.predictions || []);
   renderWarnings(payload.warnings || []);
 
-  const primaryPrediction = payload.predicted_risk_category || payload.predictions?.[0]?.predicted_rating_group || "-";
   const confidence = payload.confidence_score ?? payload.predictions?.[0]?.confidence_score;
-  predictedRisk.textContent = primaryPrediction;
   predictionConfidence.textContent = formatConfidence(confidence);
 
   if (payload.top_feature_contributions && payload.top_feature_contributions.length) {
