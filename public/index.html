@@ -190,6 +190,18 @@
         <p class="section-copy shap-intro">
           SHAP shows which inputs mattered most for this prediction. Positive values push the model toward the selected rating, while negative values push it away.
         </p>
+        <div class="shap-toolbar">
+          <label class="shap-company-search">
+            <span>Company</span>
+            <input id="shapCompanySearch" type="search" list="shapCompanyOptions" placeholder="Type a company name..." autocomplete="off" />
+          </label>
+          <button id="shapCompanyApply" type="button" class="secondary-button">Show SHAP</button>
+          <datalist id="shapCompanyOptions"></datalist>
+        </div>
+        <div class="shap-tabs" role="tablist" aria-label="SHAP contribution views">
+          <button id="shapTopTab" type="button" class="shap-tab active" aria-selected="true">Top 5</button>
+          <button id="shapBottomTab" type="button" class="shap-tab" aria-selected="false">Bottom 5</button>
+        </div>
         <div class="shap-legend" aria-label="How to read SHAP results">
           <span class="shap-pill positive">Pushes toward the rating</span>
           <span class="shap-pill negative">Pushes away from the rating</span>

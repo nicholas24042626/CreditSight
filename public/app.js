@@ -25,6 +25,11 @@ const downloadLink = document.getElementById("downloadLink");
 const metricsNote = document.getElementById("metricsNote");
 const warningsBox = document.getElementById("warningsBox");
 const featureContributions = document.getElementById("featureContributions");
+const shapCompanySearch = document.getElementById("shapCompanySearch");
+const shapCompanyApply = document.getElementById("shapCompanyApply");
+const shapCompanyOptions = document.getElementById("shapCompanyOptions");
+const shapTopTab = document.getElementById("shapTopTab");
+const shapBottomTab = document.getElementById("shapBottomTab");
 const manualFormFields = document.getElementById("manualFormFields");
 const manualModeTab = document.getElementById("manualModeTab");
 const batchModeTab = document.getElementById("batchModeTab");
@@ -106,6 +111,8 @@ let currentPredictions = [];
 let currentCompatibility = null;
 let currentOverallRiskAggregates = [];
 let currentOverallRiskQuery = "";
+let currentShapMode = "top";
+let currentShapPredictionIndex = 0;
 const CREDIT_RISK_ORDER = ["Investment-High", "Investment-Low", "Speculative", "Distressed"];
 
 function getOverallCategoryClass(category) {
@@ -125,6 +132,172 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function normalizeCompanyName(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function getUniqueCompanyNames(rows) {
+  const uniqueNames = [];
+  const seen = new Set();
+
+  (rows || []).forEach((row) => {
+    const companyName = String(row.company_name || "").trim();
+    if (!companyName) {
+      return;
+    }
+
+    const normalized = normalizeCompanyName(companyName);
+    if (seen.has(normalized)) {
+      return;
+    }
+
+    seen.add(normalized);
+    uniqueNames.push(companyName);
+  });
+
+  return uniqueNames;
+}
+
+function populateShapCompanyOptions(rows) {
+  if (!shapCompanyOptions) {
+    return;
+  }
+
+  const companyNames = getUniqueCompanyNames(rows);
+  shapCompanyOptions.innerHTML = companyNames
+    .map((companyName) => `<option value="${escapeHtml(companyName)}"></option>`)
+    .join("");
+
+  if (shapCompanyApply) {
+    shapCompanyApply.disabled = companyNames.length === 0;
+  }
+}
+
+function getShapContributions(prediction) {
+  if (!prediction) {
+    return [];
+  }
+
+  if (Array.isArray(prediction.shap_contributions)) {
+    return prediction.shap_contributions;
+  }
+
+  if (Array.isArray(prediction.top_contributions)) {
+    return prediction.top_contributions;
+  }
+
+  return [];
+}
+
+function getShapContributionSlice(contributions, mode) {
+  if (!contributions.length) {
+    return [];
+  }
+
+  if (mode === "bottom") {
+    const negativeContributions = contributions
+      .filter((item) => (Number(item.shap_value) || 0) < 0)
+      .slice()
+      .sort((a, b) => Math.abs(Number(b.shap_value) || 0) - Math.abs(Number(a.shap_value) || 0));
+
+    if (negativeContributions.length < 5) {
+      return [];
+    }
+
+    return negativeContributions.slice(0, 5);
+  }
+
+  return contributions.slice(0, 5);
+}
+
+function updateShapTabState() {
+  if (shapTopTab) {
+    shapTopTab.classList.toggle("active", currentShapMode === "top");
+    shapTopTab.setAttribute("aria-selected", String(currentShapMode === "top"));
+    shapTopTab.disabled = !currentPredictions.length;
+  }
+
+  if (shapBottomTab) {
+    shapBottomTab.classList.toggle("active", currentShapMode === "bottom");
+    shapBottomTab.setAttribute("aria-selected", String(currentShapMode === "bottom"));
+    shapBottomTab.disabled = !currentPredictions.length;
+  }
+}
+
+function setShapMode(mode) {
+  if (mode !== "top" && mode !== "bottom") {
+    return;
+  }
+
+  currentShapMode = mode;
+  updateShapTabState();
+
+  if (currentPredictions.length) {
+    setSelectedPredictionRow(currentShapPredictionIndex, false);
+  }
+}
+
+function findPredictionIndexForCompany(companyQuery) {
+  const normalizedQuery = normalizeCompanyName(companyQuery);
+  if (!normalizedQuery) {
+    return -1;
+  }
+
+  const exactMatchIndex = currentPredictions.findIndex((row) => normalizeCompanyName(row.company_name) === normalizedQuery);
+  if (exactMatchIndex !== -1) {
+    return exactMatchIndex;
+  }
+
+  return currentPredictions.findIndex((row) => {
+    const normalizedCompanyName = normalizeCompanyName(row.company_name);
+    return normalizedCompanyName && (normalizedCompanyName.includes(normalizedQuery) || normalizedQuery.includes(normalizedCompanyName));
+  });
+}
+
+function setSelectedPredictionRow(index, syncCompanySearch = false) {
+  const body = predictionTable.querySelector("tbody");
+  const tableRows = body.querySelectorAll("tr[data-row-index]");
+  const selectedRow = tableRows[index];
+
+  if (!selectedRow) {
+    return false;
+  }
+
+  currentShapPredictionIndex = index;
+  tableRows.forEach((item) => item.classList.remove("selected-row"));
+  selectedRow.classList.add("selected-row");
+  renderFeatureContributions(currentPredictions[index]);
+
+  if (syncCompanySearch && shapCompanySearch) {
+    shapCompanySearch.value = currentPredictions[index]?.company_name || "";
+  }
+
+  return true;
+}
+
+function showShapForSelectedCompany() {
+  if (!currentPredictions.length) {
+    featureContributions.className = "contribution-box empty-state";
+    featureContributions.textContent = "Run an analysis to see the SHAP explanation.";
+    return;
+  }
+
+  const query = shapCompanySearch ? shapCompanySearch.value.trim() : "";
+  if (!query) {
+    setSelectedPredictionRow(0, false);
+    return;
+  }
+
+  const matchedIndex = findPredictionIndexForCompany(query);
+  if (matchedIndex === -1) {
+    featureContributions.className = "contribution-box empty-state";
+    featureContributions.textContent = `No SHAP explanation was found for "${query}".`;
+    return;
+  }
+
+  setSelectedPredictionRow(matchedIndex, true);
 }
 
 function showStatus(message, type) {
@@ -161,6 +334,13 @@ function clearResults() {
   warningsBox.innerHTML = "";
   featureContributions.className = "contribution-box empty-state";
   featureContributions.textContent = "Run an analysis to see the SHAP explanation.";
+  currentShapMode = "top";
+  currentShapPredictionIndex = 0;
+  if (shapCompanySearch) {
+    shapCompanySearch.value = "";
+  }
+  populateShapCompanyOptions([]);
+  updateShapTabState();
   confusionMatrix.innerHTML = '<div class="empty-state">Run an analysis to see the matrix.</div>';
   classificationReport.textContent = "Run an analysis to see the report.";
   predictionTable.querySelector("tbody").innerHTML =
@@ -517,20 +697,25 @@ function collectCompatibilityMapping() {
 }
 
 function renderFeatureContributions(prediction) {
-  if (!prediction || !prediction.top_contributions || !prediction.top_contributions.length) {
+  const contributions = getShapContributions(prediction);
+  const visibleContributions = getShapContributionSlice(contributions, currentShapMode);
+
+  if (!prediction || !visibleContributions.length) {
     featureContributions.className = "contribution-box empty-state";
-    featureContributions.textContent = "No SHAP explanation was returned for this row.";
+    featureContributions.textContent = currentShapMode === "bottom"
+      ? "No five SHAP features pushing away were found for this row."
+      : "No SHAP explanation was returned for this row.";
     return;
   }
 
   const companyLabel = prediction.company_name ? `${prediction.company_name}` : "This company";
-  const contributions = prediction.top_contributions.map((item) => ({
+  const formattedContributions = visibleContributions.map((item) => ({
     ...item,
     shapValue: Number(item.shap_value) || 0,
     magnitude: Math.abs(Number(item.shap_value) || 0)
   }));
-  const maxMagnitude = Math.max(...contributions.map((item) => item.magnitude), 0.000001);
-  const items = contributions
+  const maxMagnitude = Math.max(...formattedContributions.map((item) => item.magnitude), 0.000001);
+  const items = formattedContributions
     .map((item) => {
       const directionText = item.shapValue < 0 ? "Pushes away" : "Pushes toward";
       const width = Math.max(8, (item.magnitude / maxMagnitude) * 100);
@@ -546,10 +731,14 @@ function renderFeatureContributions(prediction) {
     .join("");
 
   featureContributions.className = "contribution-box";
+  const modeLabel = currentShapMode === "bottom" ? "Bottom 5" : "Top 5";
+  const summaryCopy = currentShapMode === "bottom"
+    ? "The list below shows the five strongest negative features behind that result, ordered from the most negative effect downward."
+    : "The list below shows the strongest features behind that result, ordered from biggest effect to smaller effect.";
   featureContributions.innerHTML = `
     <div class="shap-summary">
       <p class="shap-summary-title"><strong>${escapeHtml(companyLabel)}</strong> was predicted as <strong>${escapeHtml(prediction.predicted_rating_group)}</strong>.</p>
-      <p class="shap-summary-copy">The list below shows the strongest features behind that result, ordered from biggest effect to smallest.</p>
+      <p class="shap-summary-copy">${escapeHtml(modeLabel)} view. ${escapeHtml(summaryCopy)}</p>
     </div>
     <ul class="shap-list">${items}</ul>
   `;
@@ -558,6 +747,9 @@ function renderFeatureContributions(prediction) {
 function renderPredictionRows(rows) {
   const body = predictionTable.querySelector("tbody");
   currentPredictions = rows;
+  populateShapCompanyOptions(rows);
+  currentShapMode = "top";
+  updateShapTabState();
 
   if (!rows || !rows.length) {
     body.innerHTML = '<tr><td colspan="6" class="empty-state">Run an analysis to see prediction rows.</td></tr>';
@@ -583,9 +775,7 @@ function renderPredictionRows(rows) {
   tableRows.forEach((rowElement) => {
     const index = Number(rowElement.dataset.rowIndex);
     const activate = () => {
-      body.querySelectorAll("tr[data-row-index]").forEach((item) => item.classList.remove("selected-row"));
-      rowElement.classList.add("selected-row");
-      renderFeatureContributions(currentPredictions[index]);
+      setSelectedPredictionRow(index, true);
     };
     rowElement.addEventListener("click", activate);
     rowElement.addEventListener("keydown", (event) => {
@@ -596,8 +786,8 @@ function renderPredictionRows(rows) {
     });
   });
 
-  renderFeatureContributions(currentPredictions[0]);
-  body.querySelector("tr[data-row-index]")?.classList.add("selected-row");
+  currentShapPredictionIndex = 0;
+  setSelectedPredictionRow(0, true);
 }
 
 function populateManualForm() {
@@ -825,7 +1015,8 @@ function renderResponse(payload) {
     renderFeatureContributions({
       predicted_rating_group: primaryPrediction,
       company_name: payload.predictions?.[0]?.company_name || payload.manual_metadata?.company_name || "",
-      top_contributions: payload.top_feature_contributions
+      top_contributions: payload.top_feature_contributions,
+      shap_contributions: payload.shap_contributions || payload.top_feature_contributions
     });
   }
 
@@ -842,6 +1033,23 @@ overallRiskSearch.addEventListener("input", () => {
   currentOverallRiskQuery = overallRiskSearch.value || "";
   renderOverallRiskSummaryTable();
 });
+if (shapCompanySearch) {
+  shapCompanySearch.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      showShapForSelectedCompany();
+    }
+  });
+}
+if (shapCompanyApply) {
+  shapCompanyApply.addEventListener("click", showShapForSelectedCompany);
+}
+if (shapTopTab) {
+  shapTopTab.addEventListener("click", () => setShapMode("top"));
+}
+if (shapBottomTab) {
+  shapBottomTab.addEventListener("click", () => setShapMode("bottom"));
+}
 manualForm.addEventListener("submit", submitManualAssessment);
 batchForm.addEventListener("submit", checkBatchCompatibility);
 runBatchButton.addEventListener("click", runBatchPrediction);

@@ -258,7 +258,6 @@ def compute_shap_contributions(
     artifact: dict[str, object],
     prepared_features: pd.DataFrame,
     predicted_labels: list[str],
-    top_n: int = 5,
 ) -> tuple[list[list[dict[str, object]] | None], list[str]]:
     warnings: list[str] = []
     reference_rows = artifact.get("shap_reference_rows") or []
@@ -296,7 +295,7 @@ def compute_shap_contributions(
             class_index = class_index_lookup.get(predicted_label, 0)
             class_values = normalize_shap_values(shap_values, class_index, len(feature_names))
             row_values = np.asarray(class_values[row_index], dtype=float)
-            order = np.argsort(np.abs(row_values))[::-1][:top_n]
+            order = np.argsort(np.abs(row_values))[::-1]
             contributions = []
             for feature_position in order:
                 shap_value = float(row_values[feature_position])
@@ -325,6 +324,51 @@ def format_contributions_text(contributions: list[dict[str, object]] | None) -> 
         direction = "pushes toward" if shap_value >= 0 else "pushes away from"
         parts.append(f"{item['feature']} {direction} the prediction ({shap_value:+.4f})")
     return "; ".join(parts)
+
+
+def select_shap_toward_contributions(contributions: list[dict[str, object]] | None, limit: int = 3) -> list[dict[str, object]] | None:
+    if not contributions:
+        return None
+
+    positive_contributions = [
+        item for item in contributions
+        if float(item.get("shap_value", 0) or 0) > 0
+    ]
+    positive_contributions.sort(key=lambda item: abs(float(item.get("shap_value", 0) or 0)), reverse=True)
+    selected = positive_contributions[:limit]
+    return selected or None
+
+
+def select_shap_away_contributions(contributions: list[dict[str, object]] | None, limit: int = 3) -> list[dict[str, object]] | None:
+    if not contributions:
+        return None
+
+    negative_contributions = [
+        item for item in contributions
+        if float(item.get("shap_value", 0) or 0) < 0
+    ]
+    if len(negative_contributions) < limit:
+        return None
+
+    negative_contributions.sort(key=lambda item: abs(float(item.get("shap_value", 0) or 0)), reverse=True)
+    selected = negative_contributions[:limit]
+    return selected or None
+
+
+def build_shap_csv_row(
+    row: dict[str, object],
+    row_index: int,
+    predicted_label: str,
+    contributions: list[dict[str, object]] | None,
+) -> dict[str, object]:
+    toward_contributions = select_shap_toward_contributions(contributions)
+    away_contributions = select_shap_away_contributions(contributions)
+    return {
+        "CompanyName": extract_company_label(row, row_index),
+        "FinalGrading": predicted_label,
+        "Push_Towards": "; ".join(item["feature"] for item in toward_contributions) if toward_contributions else "",
+        "Push_Away": "; ".join(item["feature"] for item in away_contributions) if away_contributions else "",
+    }
 
 
 def summarize_model_parameters(model_key: str, artifact: dict[str, object]) -> dict[str, object]:
@@ -417,6 +461,7 @@ def build_prediction_rows(
     rows = []
     for index, label in enumerate(predicted_labels, start=1):
         row_dict = input_df.iloc[index - 1].to_dict()
+        row_contributions = contribution_rows[index - 1]
         rows.append(
             {
                 "row_index": index,
@@ -424,8 +469,9 @@ def build_prediction_rows(
                 "predicted_rating_group": label,
                 "confidence_score": confidence_scores[index - 1],
                 "class_probabilities": class_probabilities[index - 1],
-                "top_contributions": contribution_rows[index - 1],
-                "top_contributions_text": format_contributions_text(contribution_rows[index - 1]),
+                "shap_contributions": row_contributions,
+                "top_contributions": row_contributions[:5] if row_contributions else None,
+                "top_contributions_text": format_contributions_text(row_contributions[:5] if row_contributions else None),
             }
         )
     return rows
@@ -521,25 +567,6 @@ def main() -> None:
         )
         warnings.extend(shap_warnings)
 
-        output_df = input_df.copy()
-        if prediction_mode == "manual":
-            for feature_name in feature_columns:
-                output_df[feature_name] = prepared_features.iloc[0][feature_name]
-
-        output_df["PredictedRatingGroup"] = predicted_labels
-        output_df["ConfidenceScore"] = confidence_scores
-        for class_label in probability_class_labels:
-            column_name = f"Probability_{class_label}"
-            probabilities_for_class = []
-            for row_probability in class_probability_rows:
-                probabilities_for_class.append(None if row_probability is None else row_probability.get(class_label))
-            output_df[column_name] = probabilities_for_class
-
-        output_df["TopFeatureContributions"] = [
-            format_contributions_text(row_contributions) for row_contributions in contribution_rows
-        ]
-        output_df.to_csv(args.output, index=False)
-
         predictions = build_prediction_rows(
             input_df=input_df,
             predicted_labels=predicted_labels,
@@ -547,6 +574,20 @@ def main() -> None:
             class_probabilities=class_probability_rows,
             contribution_rows=contribution_rows,
         )
+
+        output_rows = []
+        for index, prediction in enumerate(predictions, start=1):
+            row_dict = input_df.iloc[index - 1].to_dict()
+            output_rows.append(
+                build_shap_csv_row(
+                    row=row_dict,
+                    row_index=index,
+                    predicted_label=prediction["predicted_rating_group"],
+                    contributions=prediction["shap_contributions"],
+                )
+            )
+
+        pd.DataFrame(output_rows).to_csv(args.output, index=False)
 
         payload = {
             "model_name": model_key,
@@ -581,6 +622,7 @@ def main() -> None:
             payload["predicted_risk_category"] = predictions[0]["predicted_rating_group"]
             payload["confidence_score"] = predictions[0]["confidence_score"]
             payload["top_feature_contributions"] = predictions[0]["top_contributions"]
+            payload["shap_contributions"] = predictions[0]["shap_contributions"]
 
         print(json.dumps(payload))
     except SystemExit:
